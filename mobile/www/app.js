@@ -12,7 +12,8 @@
   const video = $('cam'), overlay = $('overlay'), octx = overlay.getContext('2d');
   const elMakes = $('makes'), elAtt = $('attempts'), elPct = $('pct'),
         elFlash = $('flash'), elStatus = $('status'), recBtn = $('recBtn'), resetBtn = $('resetBtn'),
-        voiceBtn = $('voiceBtn');
+        voiceBtn = $('voiceBtn'), setupBtn = $('setupBtn'), elSetup = $('setup'),
+        chkHoop = $('chkHoop'), chkArc = $('chkArc'), chkYou = $('chkYou'), setupVerdict = $('setupVerdict');
 
   const pre = document.createElement('canvas'); pre.width = INPUT; pre.height = INPUT;
   const pctx = pre.getContext('2d', { willReadFrequently: true });
@@ -27,10 +28,11 @@
 
   // ---------- voice callout (offline, on-device text-to-speech) ----------
   let voiceOn = localStorage.getItem('hoop_voice') !== '0';   // default on
-  function speak(text) {
-    if (!voiceOn || !('speechSynthesis' in window)) return;
+  function speak(text, force) {
+    // force=true bypasses the voice toggle (used by Setup, where audio is the point)
+    if ((!voiceOn && !force) || !('speechSynthesis' in window)) return;
     try {
-      speechSynthesis.cancel();                 // always announce the latest count
+      speechSynthesis.cancel();                 // always announce the latest
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.05; u.lang = 'en-US';
       speechSynthesis.speak(u);
@@ -41,6 +43,39 @@
     voiceBtn.textContent = voiceOn ? '🔊' : '🔇';
     voiceBtn.classList.toggle('off', !voiceOn);
   }
+
+  // ---------- setup / framing check (works from any tripod spot) ----------
+  let setupOn = false, lastSetupMsg = '';
+  function setCheck(elc, state) {
+    elc.className = 'chk ' + (state === true ? 'ok' : state === false ? 'bad' : 'wait');
+    elc.querySelector('.ic').textContent = state === true ? '✓' : state === false ? '✕' : '…';
+  }
+  function evalSetup(dets) {
+    const rim = dets.find(d => d.kind === 'rim');
+    let person = null;
+    for (const d of dets) if (d.kind === 'person' && (!person || d.w * d.h > person.w * person.h)) person = d;
+    const rimOk = !!rim;
+    const headOk = rim ? (rim.c[1] - rim.h / 2) > vh * 0.12 : false;   // space above the rim for the arc
+    let youOk = null;
+    if (person) {                                                        // not cropped at any edge
+      const L = person.c[0] - person.w / 2, R = person.c[0] + person.w / 2,
+            T = person.c[1] - person.h / 2, B = person.c[1] + person.h / 2;
+      youOk = L > vw * 0.02 && R < vw * 0.98 && T > -vh * 0.01 && B < vh * 0.985;
+    }
+    setCheck(chkHoop, rimOk);
+    setCheck(chkArc, rimOk ? headOk : 'wait');
+    setCheck(chkYou, youOk === null ? 'wait' : youOk);
+    let msg, good = false;
+    if (!rimOk) msg = 'Point the camera at the hoop';
+    else if (!headOk) msg = 'Leave room above the rim';
+    else if (person && !youOk) msg = "You're cut off — move the camera back";
+    else if (!person) msg = 'Hoop looks good — step into your spot';
+    else { msg = 'Good to go'; good = true; }
+    setupVerdict.textContent = good ? '✓ Good to go' : msg;
+    setupVerdict.className = 'setup-verdict ' + (good ? 'good' : 'bad');
+    if (msg !== lastSetupMsg) { lastSetupMsg = msg; speak(msg, true); } // setup always speaks (hear it from your spot)
+  }
+  function updateSetupBtn() { setupBtn.classList.toggle('on', setupOn); }
 
   async function initModel() {
     ort.env.wasm.numThreads = 1;     // WebView has no SharedArrayBuffer
@@ -136,6 +171,7 @@
       const dets = parse(res[outName]);
       const evt = tracker.update(dets, frameIdx++);
       draw(dets);
+      if (setupOn) evalSetup(dets);
       if (evt) {
         flash(evt.result);
         updateHUD();
@@ -202,6 +238,15 @@
     setStatus(voiceOn ? 'Voice on — calling your count after each shot.' : 'Voice off.');
   });
   updateVoiceBtn();
+
+  setupBtn.addEventListener('click', () => {
+    setupOn = !setupOn;
+    elSetup.hidden = !setupOn;
+    if (!setupOn) { lastSetupMsg = ''; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
+    updateSetupBtn();
+    if (setupOn) setStatus('Setup check — aim at the hoop, then step into your spot.');
+  });
+  updateSetupBtn();
 
   (async function boot() {
     try {
