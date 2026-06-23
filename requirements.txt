@@ -1,0 +1,14 @@
+# HoopTracker — Python dependencies
+#
+# IMPORTANT: torch/torchvision must be the CUDA build for your GPU.
+# This machine already has torch 2.11.0+cu128 (Blackwell / RTX 50-series).
+# Do NOT let a plain `pip install torch` pull the CPU wheel and break CUDA.
+# If you ever need to reinstall:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+
+ultralytics>=8.3        # detector + pose, runs on torch/CUDA above
+opencv-python>=4.10     # video I/O, drawing, webcam capture
+flask>=3.0              # local web app + MJPEG live stream
+numpy>=1.26
+requests>=2.31          # Roboflow dataset download via REST (no heavy SDK)
+PyYAML>=6.0             # data.yaml handling

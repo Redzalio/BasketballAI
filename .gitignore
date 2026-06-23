@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.log
+
+# Large / generated artifacts
+models/*.pt
+uploads/
+processed/
+data/*.db
+datasets/
+runs/
+
+# Media / sample clips (bring your own; keep the repo lean)
+*.mp4
+*.avi
+*.mov
+
+# Secrets
+.env
+
+# Envs
+.venv/
+venv/

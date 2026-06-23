@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HoopTracker</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="ball" aria-hidden="true"></span> HoopTracker</div>
+    <nav class="nav" id="nav">
+      <button data-view="live" class="active">Live</button>
+      <button data-view="import">Import</button>
+      <button data-view="dashboard">Dashboard</button>
+      <button data-view="sessions">Sessions</button>
+      <button data-view="coaching">Coaching</button>
+    </nav>
+    <span class="spacer"></span>
+    <span class="hint">Local shot tracker · 127.0.0.1:8791</span>
+  </header>
+
+  <main class="wrap">
+
+    <!-- ===================== LIVE ===================== -->
+    <section class="view active" id="view-live">
+      <div class="view-head">
+        <div>
+          <h1>Live tracking</h1>
+          <p>Point your webcam at the hoop and start a session.</p>
+        </div>
+        <div class="row">
+          <select class="input" id="cameraSelect" aria-label="Select camera">
+            <option>Loading cameras…</option>
+          </select>
+          <button class="btn primary" id="liveStartBtn">Start</button>
+          <button class="btn danger" id="liveStopBtn" disabled>Stop</button>
+        </div>
+      </div>
+
+      <div class="live-grid">
+        <div>
+          <div class="video-panel" id="videoPanel">
+            <div class="video-ph" id="videoPlaceholder">
+              <div class="big" aria-hidden="true">&#127936;</div>
+              <div class="t">Camera is off</div>
+              <div class="s">Choose a camera and press Start to begin tracking shots.</div>
+            </div>
+            <span class="live-badge" id="liveBadge" style="display:none"><span class="dot"></span> LIVE</span>
+            <div class="result-flash" id="resultFlash"></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="live-tiles">
+            <div class="tile good"><div class="label">Makes</div><div class="value" id="liveMakes">0</div></div>
+            <div class="tile"><div class="label">Attempts</div><div class="value" id="liveAttempts">0</div></div>
+            <div class="tile accent"><div class="label">FG%</div><div class="value" id="liveFg">0<small>%</small></div></div>
+            <div class="tile"><div class="label">Streak</div><div class="value" id="liveStreak">0</div></div>
+          </div>
+          <div class="card pad">
+            <div class="card-title">Shot log <span class="sub" id="liveLogCount"></span></div>
+            <div class="shotlog" id="liveShotLog">
+              <div class="empty">No shots yet — your makes and misses will appear here as you shoot.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== IMPORT ===================== -->
+    <section class="view" id="view-import">
+      <div class="view-head">
+        <div>
+          <h1>Import video</h1>
+          <p>Upload a clip and HoopTracker will track every shot, then save a session.</p>
+        </div>
+      </div>
+
+      <div class="grid cols-2">
+        <div>
+          <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload a video file">
+            <div class="big" aria-hidden="true">&#128229;</div>
+            <div class="t">Drop a video here</div>
+            <div class="s">MP4, MOV or similar — recorded from the side or behind the shooter works best.</div>
+            <span class="pick">or click to browse</span>
+            <input type="file" id="fileInput" accept="video/*" hidden />
+          </div>
+        </div>
+
+        <div class="card pad" id="importPanel">
+          <div class="card-title">Processing</div>
+          <div id="importIdle" class="muted" style="font-size:14px">
+            No video selected yet. Pick a file to begin.
+          </div>
+
+          <div id="importActive" style="display:none">
+            <div class="proc-status">
+              <span id="procFile" class="muted"></span>
+              <span class="pct" id="procPct">0%</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill" id="procFill"></div></div>
+            <div class="proc-status" style="margin-top:8px">
+              <span id="procStage" class="muted"><span class="spinner"></span> Uploading…</span>
+            </div>
+
+            <div class="tiles" id="importPreview" style="grid-template-columns:1fr 1fr 1fr; margin-top:18px; display:none">
+              <div class="tile good"><div class="label">Makes</div><div class="value" id="impMakes">0</div></div>
+              <div class="tile"><div class="label">Attempts</div><div class="value" id="impAttempts">0</div></div>
+              <div class="tile accent"><div class="label">FG%</div><div class="value" id="impFg">0<small>%</small></div></div>
+            </div>
+
+            <div id="importDone" style="display:none; margin-top:18px">
+              <div class="row">
+                <a class="btn primary" id="downloadBtn" href="#">Download annotated video</a>
+                <button class="btn" id="viewSessionBtn">View session detail</button>
+              </div>
+            </div>
+            <div id="importError" style="display:none; margin-top:14px; color:var(--red); font-size:14px"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== DASHBOARD ===================== -->
+    <section class="view" id="view-dashboard">
+      <div class="view-head">
+        <div>
+          <h1>Dashboard</h1>
+          <p>Your lifetime shooting at a glance.</p>
+        </div>
+      </div>
+      <div id="dashContent">
+        <div class="empty-state"><div class="spinner"></div></div>
+      </div>
+    </section>
+
+    <!-- ===================== SESSIONS ===================== -->
+    <section class="view" id="view-sessions">
+      <div class="view-head">
+        <div>
+          <h1>Sessions</h1>
+          <p>Every session you've tracked. Click a row for the full breakdown.</p>
+        </div>
+        <button class="btn ghost sm" id="sessionsRefresh">Refresh</button>
+      </div>
+      <div class="card" id="sessionsContent">
+        <div class="empty-state"><div class="spinner"></div></div>
+      </div>
+    </section>
+
+    <!-- ===================== COACHING ===================== -->
+    <section class="view" id="view-coaching">
+      <div class="view-head">
+        <div>
+          <h1>Coaching</h1>
+          <p>Form analysis and prioritized things to work on.</p>
+        </div>
+      </div>
+      <div id="coachContent">
+        <div class="empty-state"><div class="spinner"></div></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===================== SESSION MODAL ===================== -->
+  <div class="modal-overlay" id="sessionModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="modalTitle">Session</h2>
+          <div class="meta" id="modalMeta"></div>
+        </div>
+        <button class="modal-close" id="modalClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
