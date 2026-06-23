@@ -32,6 +32,12 @@
     #status { position:absolute; left:0; right:0; bottom:120px; text-align:center;
       font-size:3.4vw; color:#cdd3da; opacity:.85; pointer-events:none; padding:0 16px; }
 
+    /* voice-callout toggle (top-right corner) */
+    #voiceBtn { position:absolute; top:env(safe-area-inset-top,12px); right:14px; margin-top:10px;
+      min-width:0; width:56px; height:56px; padding:0; font-size:26px; line-height:1;
+      background:rgba(0,0,0,.38); }
+    #voiceBtn.off { opacity:.5; }
+
     #controls { position:absolute; left:0; right:0; bottom:env(safe-area-inset-bottom,18px);
       display:flex; gap:14px; justify-content:center; align-items:center; padding:0 18px 14px; }
     button { border:none; border-radius:999px; font-weight:800; color:#fff;
@@ -52,6 +58,7 @@
       <div id="score"><span id="makes">0</span><span class="slash">/</span><span id="attempts">0</span></div>
       <div id="pct">0%</div>
     </div>
+    <button id="voiceBtn" aria-label="Toggle voice callouts">🔊</button>
     <div id="flash"></div>
     <div id="status">Loading detector…</div>
     <div id="controls">

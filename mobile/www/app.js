@@ -11,7 +11,8 @@
   const $ = (id) => document.getElementById(id);
   const video = $('cam'), overlay = $('overlay'), octx = overlay.getContext('2d');
   const elMakes = $('makes'), elAtt = $('attempts'), elPct = $('pct'),
-        elFlash = $('flash'), elStatus = $('status'), recBtn = $('recBtn'), resetBtn = $('resetBtn');
+        elFlash = $('flash'), elStatus = $('status'), recBtn = $('recBtn'), resetBtn = $('resetBtn'),
+        voiceBtn = $('voiceBtn');
 
   const pre = document.createElement('canvas'); pre.width = INPUT; pre.height = INPUT;
   const pctx = pre.getContext('2d', { willReadFrequently: true });
@@ -23,6 +24,23 @@
   let stream = null, recorder = null, chunks = [], recording = false;
 
   const setStatus = (t) => { elStatus.textContent = t; };
+
+  // ---------- voice callout (offline, on-device text-to-speech) ----------
+  let voiceOn = localStorage.getItem('hoop_voice') !== '0';   // default on
+  function speak(text) {
+    if (!voiceOn || !('speechSynthesis' in window)) return;
+    try {
+      speechSynthesis.cancel();                 // always announce the latest count
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.05; u.lang = 'en-US';
+      speechSynthesis.speak(u);
+    } catch (e) {}
+  }
+  function updateVoiceBtn() {
+    if (!voiceBtn) return;
+    voiceBtn.textContent = voiceOn ? '🔊' : '🔇';
+    voiceBtn.classList.toggle('off', !voiceOn);
+  }
 
   async function initModel() {
     ort.env.wasm.numThreads = 1;     // WebView has no SharedArrayBuffer
@@ -118,7 +136,11 @@
       const dets = parse(res[outName]);
       const evt = tracker.update(dets, frameIdx++);
       draw(dets);
-      if (evt) { flash(evt.result); updateHUD(); }
+      if (evt) {
+        flash(evt.result);
+        updateHUD();
+        speak(tracker.makes + ' of ' + tracker.attempts + ', ' + Math.round(tracker.fgPct) + ' percent');
+      }
     } catch (e) { setStatus('err: ' + (e && e.message ? e.message : e)); }
     requestAnimationFrame(tick);
   }
@@ -168,7 +190,18 @@
   }
 
   recBtn.addEventListener('click', () => { recording ? stopRec() : startRec(); });
-  resetBtn.addEventListener('click', () => { tracker = new HoopShot.ShotTracker(); frameIdx = 0; updateHUD(); octx.clearRect(0, 0, vw, vh); });
+  resetBtn.addEventListener('click', () => {
+    tracker = new HoopShot.ShotTracker(); frameIdx = 0; updateHUD(); octx.clearRect(0, 0, vw, vh);
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+  });
+  voiceBtn.addEventListener('click', () => {
+    voiceOn = !voiceOn;
+    localStorage.setItem('hoop_voice', voiceOn ? '1' : '0');
+    if (!voiceOn && 'speechSynthesis' in window) speechSynthesis.cancel();
+    updateVoiceBtn();
+    setStatus(voiceOn ? 'Voice on — calling your count after each shot.' : 'Voice off.');
+  });
+  updateVoiceBtn();
 
   (async function boot() {
     try {
