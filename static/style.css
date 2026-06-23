@@ -418,6 +418,152 @@ select.input:focus, input.input:focus { outline: none; border-color: var(--orang
 .hotcold.cold { background: rgba(74,163,255,0.08); border-color: rgba(74,163,255,0.3); color: var(--blue); }
 .hotcold.neutral { background: var(--card-2); color: var(--text-dim); }
 
+/* ---------- Consistency layer (coaching) ---------- */
+/* band colors reused everywhere a 0-100 consistency score appears */
+.c-red   { color: var(--red); }
+.c-amber { color: var(--amber); }
+.c-green { color: var(--green); }
+
+/* "What to work on next" hero card */
+.focus-hero {
+  background: linear-gradient(180deg, rgba(255,122,26,0.07), var(--card));
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--orange);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px 22px;
+  margin-bottom: 16px;
+}
+.focus-hero .eyebrow {
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px;
+  color: var(--orange); display: flex; align-items: center; gap: 8px;
+}
+.focus-hero .eyebrow .ico { font-size: 15px; }
+.focus-hero h2 { margin: 8px 0 0; font-size: 26px; font-weight: 800; letter-spacing: -0.4px; }
+.focus-hero .why { color: var(--text-dim); font-size: 14.5px; margin-top: 8px; max-width: 70ch; }
+.focus-hero .drill {
+  margin-top: 16px; padding: 14px 16px;
+  background: var(--card-2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); display: flex; gap: 12px; align-items: flex-start;
+}
+.focus-hero .drill .badge {
+  flex: none; font-size: 11px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;
+  color: var(--orange); background: rgba(255,122,26,0.14); padding: 4px 10px; border-radius: var(--radius-pill);
+  margin-top: 1px;
+}
+.focus-hero .drill .drill-text { font-size: 14px; color: var(--text); }
+
+/* Radial consistency gauge */
+.con-score-card { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.con-gauge { flex: none; width: 168px; height: 168px; position: relative; }
+.con-gauge svg { width: 100%; height: 100%; display: block; transform: rotate(-90deg); }
+.con-gauge .track { fill: none; stroke: var(--bg-1); }
+.con-gauge .arc { fill: none; stroke-linecap: round; transition: stroke-dashoffset .7s ease, stroke .3s; }
+.con-gauge .arc.c-red   { stroke: var(--red); }
+.con-gauge .arc.c-amber { stroke: var(--amber); }
+.con-gauge .arc.c-green { stroke: var(--green); }
+.con-gauge .center {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+}
+.con-gauge .center .big { font-size: 46px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+.con-gauge .center .out-of { font-size: 13px; color: var(--text-mute); font-weight: 600; margin-top: 2px; }
+.con-score-meta { flex: 1; min-width: 200px; }
+.con-score-meta .head { font-size: 15px; font-weight: 700; }
+.con-score-meta .band {
+  display: inline-block; margin-top: 8px; font-size: 12px; font-weight: 800; letter-spacing: 0.4px;
+  text-transform: uppercase; padding: 4px 11px; border-radius: var(--radius-pill);
+}
+.con-score-meta .band.c-red   { background: var(--red-bg); color: var(--red); }
+.con-score-meta .band.c-amber { background: rgba(255,194,74,0.14); color: var(--amber); }
+.con-score-meta .band.c-green { background: var(--green-bg); color: var(--green); }
+.con-score-meta .sub { color: var(--text-dim); font-size: 13.5px; margin-top: 10px; max-width: 52ch; }
+
+/* Makes vs misses table */
+.mvm { width: 100%; border-collapse: collapse; font-size: 14px; }
+.mvm th {
+  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--text-mute); font-weight: 700; padding: 8px 10px; border-bottom: 1px solid var(--border);
+}
+.mvm th.r, .mvm td.r { text-align: right; font-variant-numeric: tabular-nums; }
+.mvm td { padding: 10px; border-bottom: 1px solid var(--border); }
+.mvm tr:last-child td { border-bottom: none; }
+.mvm tr.top { background: rgba(255,122,26,0.06); }
+.mvm td.metric { font-weight: 600; }
+.mvm .top-flag {
+  display: inline-block; margin-left: 8px; font-size: 10px; font-weight: 800; letter-spacing: 0.4px;
+  text-transform: uppercase; color: var(--orange); background: rgba(255,122,26,0.14);
+  padding: 2px 7px; border-radius: var(--radius-pill); vertical-align: 1px;
+}
+.mvm .mk { color: var(--green); font-weight: 700; }
+.mvm .ms { color: var(--red); font-weight: 700; }
+.mvm .dlt { font-weight: 700; }
+.mvm-note { color: var(--text-dim); font-size: 13px; margin-top: 12px; }
+.mvm-callout {
+  margin-top: 14px; padding: 11px 14px; font-size: 13.5px;
+  background: var(--card-2); border: 1px solid var(--border); border-left: 3px solid var(--orange);
+  border-radius: var(--radius-sm); color: var(--text);
+}
+
+/* Per-metric consistency breakdown */
+.cmetric {
+  padding: 14px 16px; background: var(--card-2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); margin-bottom: 12px;
+}
+.cmetric:last-child { margin-bottom: 0; }
+.cmetric .top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.cmetric .name { font-weight: 700; font-size: 14.5px; }
+.cmetric .mean { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--text); }
+.cmetric .mean .pm { color: var(--text-mute); }
+.cmetric .sub { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 9px; }
+.cmetric .csub-label { font-size: 12px; color: var(--text-dim); }
+.cmetric .csub-val { font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.cmetric .ctrack { height: 8px; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-pill); overflow: hidden; margin-top: 6px; }
+.cmetric .cfill { height: 100%; border-radius: var(--radius-pill); transition: width .5s ease; }
+.cmetric .cfill.c-red   { background: var(--red); }
+.cmetric .cfill.c-amber { background: var(--amber); }
+.cmetric .cfill.c-green { background: var(--green); }
+.cmetric .range {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 12px; font-weight: 600;
+  padding: 3px 9px; border-radius: var(--radius-pill);
+}
+.cmetric .range.in  { color: var(--green); background: var(--green-bg); }
+.cmetric .range.out { color: var(--amber); background: rgba(255,194,74,0.14); }
+.cmetric .range .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.cmetric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cmetric-grid .cmetric { margin-bottom: 0; }
+
+/* Drift block */
+.drift {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 16px 18px; border-radius: var(--radius); border: 1px solid var(--border);
+}
+.drift.holds { background: rgba(57,217,138,0.07); border-color: rgba(57,217,138,0.28); }
+.drift.drops { background: rgba(255,194,74,0.07); border-color: rgba(255,194,74,0.28); }
+.drift .ico { font-size: 26px; }
+.drift .txt { flex: 1; min-width: 200px; }
+.drift .txt .verdict { font-weight: 800; font-size: 16px; }
+.drift .txt .verdict.holds { color: var(--green); }
+.drift .txt .verdict.drops { color: var(--amber); }
+.drift .txt .det { color: var(--text-dim); font-size: 13px; margin-top: 3px; }
+.drift .pair { display: flex; align-items: center; gap: 14px; }
+.drift .pair .leg { text-align: center; }
+.drift .pair .leg .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-mute); font-weight: 700; }
+.drift .pair .leg .v { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.drift .pair .arrow { color: var(--text-mute); font-size: 20px; }
+
+/* Dashboard consistency mini-trend */
+.svg-line-c { fill: none; stroke: var(--blue); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.svg-area-c { fill: rgba(74,163,255,0.12); }
+.svg-dot-c  { fill: var(--blue); stroke: var(--bg); stroke-width: 2; }
+
+@media (max-width: 600px) {
+  .cmetric-grid { grid-template-columns: 1fr; }
+  .focus-hero h2 { font-size: 22px; }
+  .con-gauge { width: 140px; height: 140px; }
+  .con-gauge .center .big { font-size: 38px; }
+}
+
 /* ---------- Sessions table ---------- */
 table.sessions { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.sessions th {

@@ -364,6 +364,132 @@
   }
 
   /* ============================================================
+     CONSISTENCY LAYER (shared helpers)
+     0-100 "consistency" sub-scores -> color band (red <40, amber
+     40-70, green >70). Used by the Coaching view, the Dashboard
+     KPI tile + mini-trend, and (optionally) the session modal.
+     ============================================================ */
+  function conBand(score) {
+    score = num(score);
+    if (score < 40) return "c-red";
+    if (score <= 70) return "c-amber";
+    return "c-green";
+  }
+  function conBandLabel(score) {
+    score = num(score);
+    if (score < 40) return "Inconsistent";
+    if (score <= 70) return "Developing";
+    return "Repeatable";
+  }
+  /* trim trailing zeros: 0.90 -> "0.9", 158.6 -> "158.6", 18 -> "18" */
+  function fmtMetric(v) {
+    if (typeof v !== "number" || !isFinite(v)) return "—";
+    let s = (Math.abs(v) < 10 ? v.toFixed(2) : v.toFixed(1));
+    if (s.indexOf(".") !== -1) s = s.replace(/0+$/, "").replace(/\.$/, "");
+    return s;
+  }
+
+  /* Radial arc gauge for the 0-100 consistency score (inline SVG). */
+  function consistencyGauge(score, label) {
+    score = Math.max(0, Math.min(100, num(score)));
+    const band = conBand(score);
+    const R = 64, C = 80, sw = 14;            // viewBox 160x160
+    const circ = 2 * Math.PI * R;
+    const dash = (score / 100) * circ;
+    const offset = circ - dash;
+    return '<div class="con-gauge">' +
+      '<svg viewBox="0 0 160 160" role="img" aria-label="Consistency score ' + Math.round(score) + ' out of 100">' +
+        '<circle class="track" cx="' + C + '" cy="' + C + '" r="' + R + '" stroke-width="' + sw + '"/>' +
+        '<circle class="arc ' + band + '" cx="' + C + '" cy="' + C + '" r="' + R + '" stroke-width="' + sw + '" ' +
+          'stroke-dasharray="' + circ.toFixed(1) + '" stroke-dashoffset="' + offset.toFixed(1) + '"/>' +
+      '</svg>' +
+      '<div class="center"><div class="big ' + band + '">' + Math.round(score) + '</div>' +
+      '<div class="out-of">' + esc(label || "/ 100") + '</div></div></div>';
+  }
+
+  /* Mini consistency-over-time line (Dashboard). trend: [{date,score}] oldest->newest. */
+  function consistencyTrendChart(trend) {
+    const W = 560, H = 150, padL = 30, padR = 14, padT = 14, padB = 22;
+    if (!trend || trend.length < 2) {
+      const only = trend && trend.length === 1 ? trend[0] : null;
+      const msg = only ? "One session so far (" + Math.round(num(only.score)) +
+        "/100) — track more to see your consistency trend."
+        : "No consistency history yet — track a few sessions.";
+      return '<div class="chart-wrap"><svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Consistency over time, not enough data">' +
+        '<text class="svg-empty" x="' + (W/2) + '" y="' + (H/2) + '" text-anchor="middle">' + esc(msg) + '</text></svg></div>';
+    }
+    const data = trend.slice();
+    const n = data.length;
+    const innerW = W - padL - padR, innerH = H - padT - padB;
+    const xFor = (i) => padL + (i / (n - 1)) * innerW;
+    const yFor = (p) => padT + innerH - (Math.max(0, Math.min(100, num(p))) / 100) * innerH;
+
+    let parts = ['<div class="chart-wrap"><svg viewBox="0 0 ' + W + ' ' + H +
+      '" role="img" aria-label="Line chart of shot-to-shot consistency over time">'];
+    [0, 50, 100].forEach((g) => {
+      const y = yFor(g);
+      parts.push('<line class="svg-grid" x1="' + padL + '" y1="' + y.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + y.toFixed(1) + '"/>');
+      parts.push('<text class="svg-axis" x="' + (padL - 6) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end">' + g + '</text>');
+    });
+    const pts = data.map((d, i) => [xFor(i), yFor(d.score)]);
+    const linePath = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+    const area = linePath + " L" + pts[n-1][0].toFixed(1) + " " + (padT + innerH) +
+      " L" + pts[0][0].toFixed(1) + " " + (padT + innerH) + " Z";
+    parts.push('<path class="svg-area-c" d="' + area + '"/>');
+    parts.push('<path class="svg-line-c" d="' + linePath + '"/>');
+    const step = Math.ceil(n / 7);
+    pts.forEach((p, i) => {
+      parts.push('<circle class="svg-dot-c" cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3.2"><title>' +
+        esc(data[i].date || "") + ": " + Math.round(num(data[i].score)) + '/100</title></circle>');
+      if (i % step === 0 || i === n - 1) {
+        const lbl = String(data[i].date || "").slice(5, 10); // MM-DD
+        parts.push('<text class="svg-axis" x="' + p[0].toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle">' + esc(lbl) + '</text>');
+      }
+    });
+    parts.push('</svg></div>');
+    return parts.join("");
+  }
+
+  /* "What to work on next" hero card from a focus object {label, why, drill}. */
+  function focusHero(focus) {
+    if (!focus || !focus.label) {
+      return '<div class="focus-hero"><div class="eyebrow"><span class="ico" aria-hidden="true">&#127919;</span> What to work on next</div>' +
+        '<h2>Keep shooting</h2>' +
+        '<div class="why">Once a session has enough tracked shots, your single highest-leverage fix shows up right here.</div></div>';
+    }
+    let html = '<div class="focus-hero"><div class="eyebrow"><span class="ico" aria-hidden="true">&#127919;</span> What to work on next</div>' +
+      '<h2>' + esc(focus.label) + '</h2>';
+    if (focus.why) html += '<div class="why">' + esc(focus.why) + '</div>';
+    if (focus.drill) {
+      html += '<div class="drill"><span class="badge">Your drill</span>' +
+        '<span class="drill-text">' + esc(focus.drill) + '</span></div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  /* Per-metric consistency card. m = {label,unit,good:[lo,hi],mean,std,n,consistency,in_range} */
+  function consistencyMetricCard(m) {
+    const band = conBand(m.consistency);
+    const unit = m.unit || "";
+    const inRange = !!m.in_range;
+    const good = Array.isArray(m.good) ? m.good : null;
+    const rangeTxt = good ? (fmtMetric(good[0]) + "–" + fmtMetric(good[1]) + unit) : "";
+    const cons = Math.round(num(m.consistency));
+    return '<div class="cmetric">' +
+      '<div class="top"><span class="name">' + esc(m.label || "") + '</span>' +
+        '<span class="mean">' + fmtMetric(m.mean) + unit +
+          ' <span class="pm">± ' + fmtMetric(m.std) + unit + '</span></span></div>' +
+      '<div class="sub"><span class="csub-label">Shot-to-shot consistency</span>' +
+        '<span class="csub-val ' + band + '">' + cons + '/100</span></div>' +
+      '<div class="ctrack"><div class="cfill ' + band + '" style="width:' + cons + '%"></div></div>' +
+      (good ? '<span class="range ' + (inRange ? "in" : "out") + '"><span class="dot"></span>' +
+        (inRange ? "In ideal range" : "Outside ideal") + ' (' + esc(rangeTxt) + ')</span>' : '') +
+      (m.n ? ' <span class="muted" style="font-size:12px;margin-left:8px">' + num(m.n) + ' shots</span>' : '') +
+    '</div>';
+  }
+
+  /* ============================================================
      VIEW ROUTER  (handles teardown so polling loops stop)
      ============================================================ */
   const Views = {};
@@ -693,6 +819,9 @@
 
       const grade = formGrade(d.form_avg);
       const pb = d.personal_bests || {};
+      const conScore = d.consistency_score;
+      const conTrend = d.consistency_trend || [];
+      const hasCon = typeof conScore === "number" && (conTrend.length > 0 || num(conScore) > 0);
 
       let html = "";
       // KPI tiles
@@ -700,8 +829,11 @@
         '<div class="tile accent"><div class="label">Lifetime FG%</div><div class="value">' + pct1(life.fg_pct) + '<small>%</small></div></div>' +
         '<div class="tile"><div class="label">Makes / Attempts</div><div class="value">' + num(life.makes) + '<small> / ' + num(life.attempts) + '</small></div></div>' +
         '<div class="tile"><div class="label">Sessions</div><div class="value">' + num(life.sessions) + '</div><div class="delta">' + num(life.shots) + ' shots tracked</div></div>' +
-        '<div class="tile good"><div class="label">Avg form grade</div><div class="value">' + (grade ? grade.letter : "—") + '</div>' +
-          (grade ? '<div class="delta">' + grade.score + ' / 100</div>' : '') + '</div>' +
+        (hasCon
+          ? '<div class="tile"><div class="label">Consistency</div><div class="value ' + conBand(conScore) + '">' + Math.round(num(conScore)) + '<small> / 100</small></div>' +
+              '<div class="delta">' + esc(conBandLabel(conScore)) + ' · shot-to-shot</div></div>'
+          : '<div class="tile good"><div class="label">Avg form grade</div><div class="value">' + (grade ? grade.letter : "—") + '</div>' +
+              (grade ? '<div class="delta">' + grade.score + ' / 100</div>' : '') + '</div>') +
       '</div>';
 
       // trend + court
@@ -710,6 +842,13 @@
         '<div class="card pad"><div class="card-title">Shot chart <span class="sub">by zone</span></div>' +
           courtChart(d.by_zone) + courtLegend() + '</div>' +
       '</div>';
+
+      // consistency over time (full-width row; only when we have a score)
+      if (hasCon) {
+        html += '<div class="card pad" style="margin-bottom:16px"><div class="card-title">Consistency over time ' +
+          '<span class="sub">shot-to-shot form, higher = more repeatable</span></div>' +
+          consistencyTrendChart(conTrend) + '</div>';
+      }
 
       // personal bests + tips
       html += '<div class="grid cols-2">';
@@ -773,6 +912,8 @@
     const ins = (d && d.insights) || {};
     const fs = ins.form_summary || {};
     const grade = formGrade(fs);
+    const con = ins.consistency || null;
+    const conScore = con && typeof con.consistency_score === "number" ? con.consistency_score : null;
 
     $("#modalTitle").textContent = "Session #" + num(s.id);
     const chip = '<span class="chip ' + (s.mode === "live" ? "live" : "video") + '">' + esc(s.mode || "") + '</span>';
@@ -786,8 +927,15 @@
       '<div class="tile good"><div class="label">Makes</div><div class="value">' + num(s.makes) + '</div></div>' +
       '<div class="tile"><div class="label">Attempts</div><div class="value">' + num(s.attempts) + '</div></div>' +
       '<div class="tile accent"><div class="label">FG%</div><div class="value">' + pct1(s.fg_pct) + '<small>%</small></div></div>' +
-      '<div class="tile"><div class="label">Form grade</div><div class="value">' + (grade ? grade.letter : "—") + '</div></div>' +
+      (conScore != null
+        ? '<div class="tile"><div class="label">Consistency</div><div class="value ' + conBand(conScore) + '">' + Math.round(num(conScore)) + '<small> / 100</small></div></div>'
+        : '<div class="tile"><div class="label">Form grade</div><div class="value">' + (grade ? grade.letter : "—") + '</div></div>') +
     '</div></div>';
+
+    // what to work on (focus) for this session
+    if (con && con.focus && con.focus.label) {
+      body += '<div class="modal-section">' + focusHero(con.focus) + '</div>';
+    }
 
     // two columns: zones + form summary
     body += '<div class="grid cols-2"><div class="modal-section"><h3>Zone breakdown</h3>' + zoneBars(ins.zones) + '</div>';
@@ -918,29 +1066,72 @@
   })();
 
   /* ============================================================
-     COACHING VIEW
+     COACHING VIEW  (consistency-first)
+     Hero "what to work on next" -> consistency score gauge ->
+     makes vs misses -> per-metric breakdown (worst first) ->
+     in-session drift. Hero + score come from /api/overview; the
+     detailed breakdown comes from the newest session's
+     insights.consistency. Both are handled defensively.
      ============================================================ */
   Views.coaching = (function () {
     async function load() {
       const root = $("#coachContent");
       root.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+
+      // overview drives the hero focus + headline score
       let d;
       try { d = await api("/api/overview"); }
       catch (e) { root.innerHTML = emptyState("&#9888;", "Couldn't load coaching", e.message); return; }
 
       const life = (d && d.lifetime) || {};
-      if (!num(life.attempts)) {
+      if (!num(life.attempts) && !num(life.sessions)) {
         root.innerHTML = emptyState("&#127919;", "No form data yet",
-          "Track some shots and your form analysis + coaching tips will appear here.");
+          "Play a session or import a video, then your consistency breakdown and the single thing to work on next will appear here.");
         return;
       }
+
+      // pull the newest session for the detailed consistency report
+      let con = null, sessId = null, sessErr = false;
+      try {
+        const sd = await api("/api/sessions");
+        const list = (sd && sd.sessions) || [];
+        if (list.length) {
+          // sessions are newest-first; be defensive and pick the max id anyway
+          sessId = list.reduce((best, s) => (num(s.id) > num(best.id) ? s : best), list[0]).id;
+          const full = await api("/api/session/" + encodeURIComponent(sessId));
+          con = full && full.insights && full.insights.consistency;
+        }
+      } catch (e) { sessErr = true; }
+
+      // headline focus/score: prefer overview, fall back to the session report
+      const focus = (d.focus && d.focus.label) ? d.focus : (con && con.focus) || null;
+      const score = (typeof d.consistency_score === "number")
+        ? d.consistency_score
+        : (con ? con.consistency_score : null);
 
       const fa = d.form_avg || {};
       const hc = d.hot_cold || "";
 
       let html = "";
 
-      // hot/cold banner
+      // 1) HERO — what to work on next
+      html += focusHero(focus);
+
+      // 2) CONSISTENCY SCORE — radial gauge
+      if (typeof score === "number") {
+        html += '<div class="card pad" style="margin-bottom:16px"><div class="card-title">Consistency score</div>' +
+          '<div class="con-score-card">' + consistencyGauge(score, "/ 100") +
+          '<div class="con-score-meta"><div class="head">Shot-to-shot consistency</div>' +
+            '<span class="band ' + conBand(score) + '">' + esc(conBandLabel(score)) + '</span>' +
+            '<div class="sub">How repeatable your form is rep-to-rep. Higher means your mechanics barely change between shots — the foundation of a reliable jumper.' +
+            (con && con.biggest_inconsistency
+              ? ' Your most variable piece right now is <strong>' + esc(con.biggest_inconsistency.label) +
+                '</strong> (±' + fmtMetric(con.biggest_inconsistency.std) + esc(con.biggest_inconsistency.unit || "") + ').'
+              : '') +
+            '</div></div></div></div>';
+      }
+
+      // hot/cold banner (kept — useful context, below the headline)
       if (hc) {
         const low = hc.toLowerCase();
         const cls = low.indexOf("hot") !== -1 ? "hot" : (low.indexOf("cold") !== -1 ? "cold" : "neutral");
@@ -948,9 +1139,24 @@
         html += '<div class="hotcold ' + cls + '" style="margin-bottom:16px"><span class="ico" aria-hidden="true">' + ico + '</span><span>' + esc(hc) + '</span></div>';
       }
 
-      // form gauges + tips
+      // 3) MAKES VS MISSES
+      html += '<div class="card pad" style="margin-bottom:16px"><div class="card-title">Makes vs misses ' +
+        '<span class="sub">what changes when you miss</span></div>' + makesVsMissesBlock(con) + '</div>';
+
+      // 4) PER-METRIC BREAKDOWN (worst/most-inconsistent first)
+      html += '<div class="card pad" style="margin-bottom:16px"><div class="card-title">Per-metric consistency ' +
+        '<span class="sub">most inconsistent first</span></div>' + metricBreakdown(con) + '</div>';
+
+      // 5) IN-SESSION DRIFT
+      const driftHtml = driftBlock(con);
+      if (driftHtml) {
+        html += '<div class="card pad" style="margin-bottom:16px"><div class="card-title">In-session drift ' +
+          '<span class="sub">did your form hold up?</span></div>' + driftHtml + '</div>';
+      }
+
+      // 6) Secondary — form vs ideal ranges + classic tips (kept from before)
       html += '<div class="grid cols-2">';
-      html += '<div class="card pad"><div class="card-title">Shooting form <span class="sub">vs ideal ranges</span></div>';
+      html += '<div class="card pad"><div class="card-title">Form vs ideal ranges <span class="sub">lifetime averages</span></div>';
       if (fa && Object.keys(fa).length) {
         html += formGauge("elbow_angle", fa.elbow_angle);
         html += formGauge("knee_angle", fa.knee_angle);
@@ -960,12 +1166,73 @@
         html += '<div class="muted" style="font-size:14px">No form averages yet.</div>';
       }
       html += '</div>';
-
-      html += '<div class="card pad"><div class="card-title">Work on this <span class="sub">prioritized</span></div>' +
+      html += '<div class="card pad"><div class="card-title">More pointers <span class="sub">prioritized</span></div>' +
         tipsWithExplain(d.tips, fa) + '</div>';
       html += '</div>';
 
       root.innerHTML = html;
+    }
+
+    /* makes_vs_misses -> table of rows, highlighting the top leak */
+    function makesVsMissesBlock(con) {
+      const mvm = con && con.makes_vs_misses;
+      if (!mvm || !mvm.enough) {
+        return '<div class="mvm-note">Need more shots to compare — once a session has at least a few makes <em>and</em> a few misses, you\'ll see exactly which part of your form breaks down on misses.</div>';
+      }
+      const rows = mvm.rows || [];
+      if (!rows.length) return '<div class="mvm-note">Not enough per-metric data to compare makes and misses yet.</div>';
+      const topKey = mvm.top && mvm.top.metric;
+      let out = '<table class="mvm"><thead><tr><th>Metric</th><th class="r">On makes</th><th class="r">On misses</th><th class="r">Difference</th></tr></thead><tbody>';
+      out += rows.map((r) => {
+        const unit = r.unit || "";
+        const isTop = r.metric === topKey;
+        const d = num(r.delta);
+        const dStr = (d > 0 ? "+" : "") + fmtMetric(d) + unit;
+        return '<tr' + (isTop ? ' class="top"' : '') + '>' +
+          '<td class="metric">' + esc(r.label || "") + (isTop ? '<span class="top-flag">biggest</span>' : '') + '</td>' +
+          '<td class="r mk">' + fmtMetric(r.make) + unit + '</td>' +
+          '<td class="r ms">' + fmtMetric(r.miss) + unit + '</td>' +
+          '<td class="r dlt">' + dStr + '</td></tr>';
+      }).join("");
+      out += '</tbody></table>';
+      if (mvm.top) {
+        out += '<div class="mvm-callout"><strong>This is what changes when you miss:</strong> your ' +
+          esc((mvm.top.label || "").toLowerCase()) + ' is ' + fmtMetric(Math.abs(num(mvm.top.delta))) +
+          esc(mvm.top.unit || "") + ' different on misses vs makes. Lock that down first.</div>';
+      }
+      return out;
+    }
+
+    /* metrics object -> per-metric cards, sorted by consistency ASC (leaks on top) */
+    function metricBreakdown(con) {
+      const metrics = con && con.metrics;
+      if (!metrics || !Object.keys(metrics).length) {
+        return '<div class="muted" style="font-size:14px">No per-metric form data yet — track a session (with pose detected) and each measured part of your shot will be scored here.</div>';
+      }
+      const entries = Object.keys(metrics).map((k) => metrics[k])
+        .sort((a, b) => num(a.consistency) - num(b.consistency));
+      return '<div class="cmetric-grid">' + entries.map(consistencyMetricCard).join("") + '</div>';
+    }
+
+    /* drift -> holds up / drops off block; null when not enough data */
+    function driftBlock(con) {
+      const dr = con && con.drift;
+      if (!dr || !dr.enough) return null;
+      const holds = dr.verdict !== "drops off";
+      const delta = num(dr.delta);
+      const dStr = (delta > 0 ? "+" : "") + Math.round(delta);
+      return '<div class="drift ' + (holds ? "holds" : "drops") + '">' +
+        '<span class="ico" aria-hidden="true">' + (holds ? "&#9989;" : "&#128201;") + '</span>' +
+        '<div class="txt"><div class="verdict ' + (holds ? "holds" : "drops") + '">' +
+          (holds ? "Your form holds up" : "Your form drops off") + '</div>' +
+          '<div class="det">Shot-to-shot consistency went from ' + Math.round(num(dr.early)) +
+          ' early to ' + Math.round(num(dr.late)) + ' late in the session (' + dStr + ' points).' +
+          (holds ? ' Nice — fatigue isn\'t wrecking your mechanics.' : ' Tighten up your routine as you tire, or shorten reps.') +
+          '</div></div>' +
+        '<div class="pair"><div class="leg"><div class="k">Early</div><div class="v ' + conBand(dr.early) + '">' + Math.round(num(dr.early)) + '</div></div>' +
+          '<span class="arrow" aria-hidden="true">&rarr;</span>' +
+          '<div class="leg"><div class="k">Late</div><div class="v ' + conBand(dr.late) + '">' + Math.round(num(dr.late)) + '</div></div></div>' +
+      '</div>';
     }
 
     // tips list with a one-line explanation each (use server note if present, else infer from form)
