@@ -4,16 +4,18 @@
 (function () {
   const MODEL = 'models/detector.onnx';
   const INPUT = 416;
-  const PREFILTER = 0.20;          // low pre-threshold; ShotTracker applies per-class conf
+  const PREFILTER = 0.10;          // low pre-threshold; ShotTracker applies per-class conf
   const NMS_IOU = 0.45;
   const CLASS_KIND = { 0: 'ball', 1: 'rim', 2: 'person' };  // merged data.yaml order
+  const ZOOM_STEPS = [1.0, 1.5, 2.0, 2.5];
 
   const $ = (id) => document.getElementById(id);
   const video = $('cam'), overlay = $('overlay'), octx = overlay.getContext('2d');
   const elMakes = $('makes'), elAtt = $('attempts'), elPct = $('pct'),
         elFlash = $('flash'), elStatus = $('status'), recBtn = $('recBtn'), resetBtn = $('resetBtn'),
         voiceBtn = $('voiceBtn'), setupBtn = $('setupBtn'), elSetup = $('setup'),
-        chkHoop = $('chkHoop'), chkArc = $('chkArc'), chkYou = $('chkYou'), setupVerdict = $('setupVerdict');
+        chkHoop = $('chkHoop'), chkArc = $('chkArc'), chkYou = $('chkYou'), setupVerdict = $('setupVerdict'),
+        zoomBtn = $('zoomBtn');
 
   const pre = document.createElement('canvas'); pre.width = INPUT; pre.height = INPUT;
   const pctx = pre.getContext('2d', { willReadFrequently: true });
@@ -23,6 +25,8 @@
   let frameIdx = 0, active = false;
   let vw = 0, vh = 0, lb = { scale: 1, padX: 0, padY: 0 };
   let stream = null, recorder = null, chunks = [], recording = false;
+  let zoomIdx = 0, zoomFactor = 1.0;
+  let zCropX = 0, zCropY = 0, zCropW = 0, zCropH = 0;
 
   const setStatus = (t) => { elStatus.textContent = t; };
 
@@ -77,6 +81,20 @@
   }
   function updateSetupBtn() { setupBtn.classList.toggle('on', setupOn); }
 
+  function updateCrop() {
+    if (zoomFactor <= 1.0 || !vw) { zCropW = 0; return; }
+    zCropW = vw / zoomFactor;
+    zCropH = vh / zoomFactor;
+    zCropX = (vw - zCropW) / 2;
+    zCropY = (vh - zCropH) / 2;
+  }
+
+  function updateZoomBtn() {
+    if (!zoomBtn) return;
+    zoomBtn.textContent = zoomFactor === 1.0 ? '1×' : zoomFactor + '×';
+    zoomBtn.classList.toggle('zoomed', zoomFactor > 1.0);
+  }
+
   async function initModel() {
     ort.env.wasm.numThreads = 1;     // WebView has no SharedArrayBuffer
     ort.env.wasm.simd = true;
@@ -101,11 +119,17 @@
     lb.scale = Math.min(INPUT / vw, INPUT / vh);
     lb.padX = (INPUT - vw * lb.scale) / 2;
     lb.padY = (INPUT - vh * lb.scale) / 2;
+    updateCrop();
   }
 
   function preprocess() {
     pctx.fillStyle = '#727272'; pctx.fillRect(0, 0, INPUT, INPUT);
-    pctx.drawImage(video, lb.padX, lb.padY, vw * lb.scale, vh * lb.scale);
+    if (zCropW > 0) {
+      // Zoom: stretch cropped region to fill YOLO input (more pixels per object)
+      pctx.drawImage(video, zCropX, zCropY, zCropW, zCropH, 0, 0, INPUT, INPUT);
+    } else {
+      pctx.drawImage(video, lb.padX, lb.padY, vw * lb.scale, vh * lb.scale);
+    }
     const d = pctx.getImageData(0, 0, INPUT, INPUT).data;
     const n = INPUT * INPUT, f = new Float32Array(3 * n);
     for (let i = 0; i < n; i++) {
@@ -133,15 +157,40 @@
     raw.sort((a, b) => b.s - a.s);
     const keep = [];
     for (const d of raw) if (!keep.some(k => k.c === d.c && iou(k, d) > NMS_IOU)) keep.push(d);
-    return keep.map(d => ({
-      kind: CLASS_KIND[d.c], conf: d.s,
-      c: [(d.cx - lb.padX) / lb.scale, (d.cy - lb.padY) / lb.scale],
-      w: d.w / lb.scale, h: d.h / lb.scale
-    }));
+    return keep.map(d => {
+      let cx, cy, dw, dh;
+      if (zCropW > 0) {
+        // Stretched crop: map YOLO (0-INPUT) → crop region → video coords
+        cx = zCropX + (d.cx / INPUT) * zCropW;
+        cy = zCropY + (d.cy / INPUT) * zCropH;
+        dw = (d.w / INPUT) * zCropW;
+        dh = (d.h / INPUT) * zCropH;
+      } else {
+        cx = (d.cx - lb.padX) / lb.scale;
+        cy = (d.cy - lb.padY) / lb.scale;
+        dw = d.w / lb.scale;
+        dh = d.h / lb.scale;
+      }
+      return { kind: CLASS_KIND[d.c], conf: d.s, c: [cx, cy], w: dw, h: dh };
+    });
   }
 
   function draw(dets) {
     octx.clearRect(0, 0, vw, vh);
+    // Zoom crop indicator: corner marks showing the active detection region
+    if (zCropW > 0) {
+      const lw = Math.max(2, vw / 240);
+      const len = Math.min(zCropW, zCropH) * 0.07;
+      octx.strokeStyle = 'rgba(255,122,26,0.55)';
+      octx.lineWidth = lw;
+      const corners = [
+        [zCropX, zCropY, 1, 1], [zCropX + zCropW, zCropY, -1, 1],
+        [zCropX, zCropY + zCropH, 1, -1], [zCropX + zCropW, zCropY + zCropH, -1, -1]
+      ];
+      for (const [x, y, sx, sy] of corners) {
+        octx.beginPath(); octx.moveTo(x + sx * len, y); octx.lineTo(x, y); octx.lineTo(x, y + sy * len); octx.stroke();
+      }
+    }
     for (const d of dets) {
       if (d.kind === 'person') continue;
       octx.strokeStyle = d.kind === 'ball' ? '#ffa61a' : '#ff4d4d';
@@ -224,6 +273,17 @@
     recBtn.classList.remove('recording');
     recBtn.innerHTML = '<span class="rec-dot"></span>Start';
   }
+
+  if (zoomBtn) {
+    zoomBtn.addEventListener('click', () => {
+      zoomIdx = (zoomIdx + 1) % ZOOM_STEPS.length;
+      zoomFactor = ZOOM_STEPS[zoomIdx];
+      updateCrop();
+      updateZoomBtn();
+      setStatus(zoomFactor === 1.0 ? 'Zoom off.' : zoomFactor + '× zoom — YOLO sees more detail in the center zone.');
+    });
+  }
+  updateZoomBtn();
 
   recBtn.addEventListener('click', () => { recording ? stopRec() : startRec(); });
   resetBtn.addEventListener('click', () => {

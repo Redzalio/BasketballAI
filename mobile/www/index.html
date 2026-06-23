@@ -66,6 +66,8 @@
     #recBtn.recording { background:var(--red); }
     #recBtn:disabled { background:#3a4048; color:#8a93a0; }
     #resetBtn { background:rgba(255,255,255,.14); min-width:30vw; }
+    #zoomBtn { background:rgba(255,255,255,.14); min-width:18vw; font-size:4.5vw; }
+    #zoomBtn.zoomed { background:rgba(255,122,26,.75); }
     .rec-dot { display:inline-block; width:.5em; height:.5em; border-radius:50%;
       background:#fff; margin-right:.5em; vertical-align:middle; }
   </style>
@@ -95,6 +97,7 @@
     <div id="controls">
       <button id="recBtn" disabled><span class="rec-dot"></span>Start</button>
       <button id="resetBtn">Reset</button>
+      <button id="zoomBtn" aria-label="Zoom level">1×</button>
     </div>
   </div>
 
