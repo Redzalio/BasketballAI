@@ -68,6 +68,17 @@
     #resetBtn { background:rgba(255,255,255,.14); min-width:30vw; }
     #zoomBtn { background:rgba(255,255,255,.14); min-width:18vw; font-size:4.5vw; }
     #zoomBtn.zoomed { background:rgba(255,122,26,.75); }
+
+    /* Landscape: phone rotated sideways for court shooting — shrink fixed elements */
+    @media (orientation: landscape) {
+      #score { font-size: 14vh; }
+      #pct { font-size: 6vh; }
+      #status { bottom: 72px; font-size: 2.4vw; }
+      button { padding: 10px 22px; font-size: 3.8vw; }
+      #recBtn, #resetBtn { min-width: 28vw; }
+      #zoomBtn { min-width: 12vw; }
+      #voiceBtn, #setupBtn { width: 48px; height: 48px; font-size: 21px; }
+    }
     .rec-dot { display:inline-block; width:.5em; height:.5em; border-radius:50%;
       background:#fff; margin-right:.5em; vertical-align:middle; }
   </style>

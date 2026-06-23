@@ -308,6 +308,17 @@
   });
   updateSetupBtn();
 
+  // Update detection geometry when phone rotates (portrait ↔ landscape)
+  window.addEventListener('resize', () => {
+    if (!video.videoWidth) return;
+    vw = video.videoWidth; vh = video.videoHeight;
+    overlay.width = vw; overlay.height = vh;
+    lb.scale = Math.min(INPUT / vw, INPUT / vh);
+    lb.padX = (INPUT - vw * lb.scale) / 2;
+    lb.padY = (INPUT - vh * lb.scale) / 2;
+    updateCrop();
+  });
+
   (async function boot() {
     try {
       setStatus('Loading detector…');
