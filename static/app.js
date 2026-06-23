@@ -389,6 +389,23 @@
     return s;
   }
 
+  /* Goal progress band: red <40, amber 40-79, green >=80 (or achieved).
+     Distinct from conBand() — goals use the spec's 40/80 thresholds. */
+  function goalBand(pct, achieved) {
+    if (achieved) return "g-green";
+    pct = num(pct);
+    if (pct < 40) return "g-red";
+    if (pct < 80) return "g-amber";
+    return "g-green";
+  }
+  /* Drop a trailing ".0" so "80.0%" reads "80%", but keep "91.4%". */
+  function fmtGoalNum(v) {
+    if (typeof v !== "number" || !isFinite(v)) return "0";
+    let s = v.toFixed(1);
+    if (s.indexOf(".") !== -1) s = s.replace(/\.0$/, "");
+    return s;
+  }
+
   /* Radial arc gauge for the 0-100 consistency score (inline SVG). */
   function consistencyGauge(score, label) {
     score = Math.max(0, Math.min(100, num(score)));
@@ -486,7 +503,27 @@
       (good ? '<span class="range ' + (inRange ? "in" : "out") + '"><span class="dot"></span>' +
         (inRange ? "In ideal range" : "Outside ideal") + ' (' + esc(rangeTxt) + ')</span>' : '') +
       (m.n ? ' <span class="muted" style="font-size:12px;margin-left:8px">' + num(m.n) + ' shots</span>' : '') +
+      proBenchLine(m, unit) +
     '</div>';
+  }
+
+  /* Pro-benchmark line for a per-metric card. m.pro = [lo,hi] (or null),
+     m.vs_pro = "in"|"low"|"high" (or null). Renders nothing without a range. */
+  function proBenchLine(m, unit) {
+    const pro = Array.isArray(m.pro) ? m.pro : null;
+    if (!pro) return "";
+    unit = unit != null ? unit : (m.unit || "");
+    const rangeTxt = '<b>' + fmtMetric(pro[0]) + '–' + fmtMetric(pro[1]) + unit + '</b>';
+    let tag = "";
+    const vs = m.vs_pro;
+    if (vs === "in") {
+      tag = '<span class="pro-tag in"><span class="dot"></span>in range</span>';
+    } else if (vs === "low") {
+      tag = '<span class="pro-tag out"><span class="dot"></span>below pro</span>';
+    } else if (vs === "high") {
+      tag = '<span class="pro-tag out"><span class="dot"></span>above pro</span>';
+    }
+    return '<div class="pro"><span class="pro-range">Pro: ' + rangeTxt + '</span>' + tag + '</div>';
   }
 
   /* ============================================================
@@ -836,6 +873,12 @@
               (grade ? '<div class="delta">' + grade.score + ' / 100</div>' : '') + '</div>') +
       '</div>';
 
+      // goals (loaded async after the dashboard paints — keeps overview fast)
+      html += '<div class="card pad" id="goalsCard" style="margin-bottom:16px">' +
+        '<div class="card-title">Goals <span class="sub">track progress toward a target</span></div>' +
+        '<div id="goalsBody"><div class="empty-state" style="padding:24px"><div class="spinner"></div></div></div>' +
+      '</div>';
+
       // trend + court
       html += '<div class="grid cols-2" style="margin-bottom:16px">' +
         '<div class="card pad"><div class="card-title">FG% over time</div>' + trendChart(d.trend) + '</div>' +
@@ -857,6 +900,108 @@
       html += '</div>';
 
       root.innerHTML = html;
+
+      // goals come from their own endpoint; load after the main paint
+      loadGoals();
+    }
+
+    /* ---- Goals ---- */
+    async function loadGoals() {
+      const body = $("#goalsBody");
+      if (!body) return;
+      let g;
+      try { g = await api("/api/goals"); }
+      catch (e) {
+        body.innerHTML = '<div class="muted" style="font-size:14px">Couldn\'t load goals: ' + esc(e.message) + '</div>';
+        return;
+      }
+      body.innerHTML = goalsMarkup(g);
+    }
+
+    function goalsMarkup(g) {
+      const goals = (g && g.goals) || [];
+      let out = "";
+      if (!goals.length) {
+        out += emptyState("&#127919;", "No goals yet", "Set a goal to start tracking progress.");
+      } else {
+        out += '<div class="goal-list">' + goals.map(goalRow).join("") + '</div>';
+      }
+      out += addGoalForm(g && g.metric_options);
+      return out;
+    }
+
+    function goalRow(goal) {
+      const pct = Math.max(0, Math.min(100, num(goal.pct)));
+      const achieved = !!goal.achieved;
+      const band = goalBand(pct, achieved);
+      const suffix = goal.suffix || "";
+      const label = goal.label || goal.metric_label || "Goal";
+      const cur = fmtGoalNum(num(goal.current)) + esc(suffix);
+      const tgt = fmtGoalNum(num(goal.target)) + esc(suffix);
+      return '<div class="goal" data-gid="' + num(goal.id) + '">' +
+        '<button class="goal-del" data-gid="' + num(goal.id) + '" title="Delete goal" aria-label="Delete goal">&times;</button>' +
+        '<div class="goal-head">' +
+          '<span class="goal-label">' + esc(label) + '</span>' +
+          '<span class="goal-vals"><span class="cur">' + cur + '</span> / ' + tgt + '</span>' +
+        '</div>' +
+        '<div class="goal-track"><div class="goal-fill ' + band + '" style="width:' + pct + '%"></div></div>' +
+        '<div class="goal-foot">' +
+          '<span class="goal-pct ' + band + '">' + Math.round(pct) + '%</span>' +
+          (achieved ? '<span class="goal-badge">&#10003; Achieved</span>' : '') +
+        '</div>' +
+      '</div>';
+    }
+
+    function addGoalForm(metricOptions) {
+      const opts = metricOptions || {};
+      const keys = Object.keys(opts);
+      if (!keys.length) {
+        // no metrics offered by the server — skip the form rather than render an empty select
+        return '';
+      }
+      const optHtml = keys.map((k) => '<option value="' + esc(k) + '">' + esc(opts[k]) + '</option>').join("");
+      return '<div class="goal-add">' +
+        '<div class="goal-add-title">Add a goal</div>' +
+        '<div class="goal-add-row">' +
+          '<select class="input goal-metric" id="goalMetric" aria-label="Goal metric">' + optHtml + '</select>' +
+          '<input class="input goal-target" id="goalTarget" type="number" step="any" min="0" placeholder="Target" aria-label="Target value" />' +
+          '<input class="input goal-optlabel" id="goalLabel" type="text" maxlength="60" placeholder="Label (optional)" aria-label="Goal label" />' +
+          '<button class="btn primary sm" id="goalAddBtn">Add goal</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    async function addGoal() {
+      const metricSel = $("#goalMetric"), targetInput = $("#goalTarget"), labelInput = $("#goalLabel");
+      if (!metricSel || !targetInput) return;
+      const metric = metricSel.value;
+      const targetRaw = targetInput.value;
+      if (targetRaw === "" || isNaN(+targetRaw)) { toast("Enter a target number for your goal.", true); targetInput.focus(); return; }
+      const body = { metric: metric, target: +targetRaw };
+      const lbl = (labelInput && labelInput.value || "").trim();
+      if (lbl) body.label = lbl;
+      const btn = $("#goalAddBtn");
+      if (btn) btn.disabled = true;
+      try {
+        const g = await api("/api/goals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        $("#goalsBody").innerHTML = goalsMarkup(g);
+        toast("Goal added");
+      } catch (e) {
+        toast("Couldn't add goal: " + e.message, true);
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function deleteGoal(id) {
+      try {
+        await api("/api/goals/" + encodeURIComponent(id), { method: "DELETE" });
+        await loadGoals();
+        toast("Goal removed");
+      } catch (e) { toast("Couldn't remove goal: " + e.message, true); }
     }
 
     function pbCards(pb) {
@@ -884,8 +1029,20 @@
     return {
       init() {
         $("#dashContent").addEventListener("click", (e) => {
+          // goal delete
+          const del = e.target.closest(".goal-del");
+          if (del) { deleteGoal(+del.dataset.gid); return; }
+          // add goal
+          if (e.target.closest("#goalAddBtn")) { addGoal(); return; }
+          // personal-best tile -> open session
           const t = e.target.closest("[data-sid]");
           if (t) { show("sessions"); openSession(+t.dataset.sid); }
+        });
+        // Enter inside the goal target/label inputs submits the goal
+        $("#dashContent").addEventListener("keydown", (e) => {
+          if (e.key !== "Enter") return;
+          const inp = e.target.closest("#goalTarget, #goalLabel");
+          if (inp) { e.preventDefault(); addGoal(); }
         });
       },
       enter() { load(); }
@@ -1074,6 +1231,8 @@
      insights.consistency. Both are handled defensively.
      ============================================================ */
   Views.coaching = (function () {
+    let currentFocus = null;  // focus object backing the "log this drill" button
+
     async function load() {
       const root = $("#coachContent");
       root.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
@@ -1114,8 +1273,9 @@
 
       let html = "";
 
-      // 1) HERO — what to work on next
-      html += focusHero(focus);
+      // 1) HERO — what to work on next (+ a "log this drill" action when we
+      //    have a concrete focus metric + drill to log against)
+      html += focusHeroWithLog(focus);
 
       // 2) CONSISTENCY SCORE — radial gauge
       if (typeof score === "number") {
@@ -1154,6 +1314,13 @@
           '<span class="sub">did your form hold up?</span></div>' + driftHtml + '</div>';
       }
 
+      // 5b) PRACTICE LOG — drills you logged + whether they tightened up.
+      //     Loaded from its own endpoint after paint.
+      html += '<div class="card pad" id="practiceCard" style="margin-bottom:16px">' +
+        '<div class="card-title">Practice log <span class="sub">did your drills tighten up your form?</span></div>' +
+        '<div id="practiceBody"><div class="empty-state" style="padding:24px"><div class="spinner"></div></div></div>' +
+      '</div>';
+
       // 6) Secondary — form vs ideal ranges + classic tips (kept from before)
       html += '<div class="grid cols-2">';
       html += '<div class="card pad"><div class="card-title">Form vs ideal ranges <span class="sub">lifetime averages</span></div>';
@@ -1171,6 +1338,106 @@
       html += '</div>';
 
       root.innerHTML = html;
+
+      // remember the current focus so the "log this drill" button can POST it
+      currentFocus = (focus && focus.focus) ? focus : null;
+
+      // practice log loads from its own endpoint
+      loadPractice();
+    }
+
+    /* The shared focusHero() is also used by the session modal, so we don't
+       bake the log button into it. Here we append a "log this drill" action
+       when the focus has both a metric key and a drill to record. */
+    function focusHeroWithLog(focus) {
+      let html = focusHero(focus);
+      if (focus && focus.focus && focus.drill) {
+        const btn = '<div class="log-drill-row">' +
+          '<button class="btn log-drill" id="logDrillBtn">&#10003; Log this drill</button></div>';
+        // inject the button just before the hero's closing tag
+        const close = html.lastIndexOf("</div>");
+        if (close !== -1) html = html.slice(0, close) + btn + html.slice(close);
+        else html += btn;
+      }
+      return html;
+    }
+
+    /* ---- Practice log ---- */
+    async function loadPractice() {
+      const body = $("#practiceBody");
+      if (!body) return;
+      let p;
+      try { p = await api("/api/practice"); }
+      catch (e) {
+        body.innerHTML = '<div class="muted" style="font-size:14px">Couldn\'t load practice log: ' + esc(e.message) + '</div>';
+        return;
+      }
+      body.innerHTML = practiceMarkup(p);
+    }
+
+    function practiceMarkup(p) {
+      const list = (p && p.practice) || [];
+      if (!list.length) {
+        return emptyState("&#128221;", "No drills logged yet",
+          "Log a drill from your focus above, then play a session — this will show if it tightened up.");
+      }
+      return '<div class="practice-list">' + list.map(practiceRow).join("") + '</div>';
+    }
+
+    function practiceRow(p) {
+      const label = p.label || cap(p.focus_metric || "") || "Drill";
+      const baseStd = num(p.baseline_std);
+      const hasAfter = (typeof p.after_std === "number" && isFinite(p.after_std));
+      let deltaLine = "";
+      if (hasAfter) {
+        const improved = !!p.improved;
+        const variance = '<span class="p-var">±' + fmtMetric(baseStd) + '&deg; ' +
+          '<span class="arrow">&rarr;</span> ±' + fmtMetric(num(p.after_std)) + '&deg;</span>';
+        const badge = improved
+          ? '<span class="p-improved">improved &darr;</span>'
+          : '';
+        let meta = "";
+        if (typeof p.delta === "number" && isFinite(p.delta)) {
+          const dv = num(p.delta);
+          const dStr = (dv > 0 ? "+" : "") + fmtMetric(dv) + "&deg;";
+          meta = '<span class="p-meta">change <span class="dlt-num' + (improved ? " good" : "") + '">' + dStr + '</span>';
+          if (p.sessions_since != null) meta += ' · ' + num(p.sessions_since) + ' session' + (num(p.sessions_since) === 1 ? "" : "s") + ' since';
+          meta += '</span>';
+        } else if (p.sessions_since != null) {
+          meta = '<span class="p-meta">' + num(p.sessions_since) + ' session' + (num(p.sessions_since) === 1 ? "" : "s") + ' since</span>';
+        }
+        deltaLine = '<div class="p-delta">' + variance + badge + meta + '</div>';
+      } else {
+        deltaLine = '<div class="p-delta"><span class="p-var">±' + fmtMetric(baseStd) + '&deg;</span>' +
+          '<span class="p-pending">no session since</span></div>';
+      }
+      return '<div class="practice">' +
+        '<div class="p-head"><span class="p-metric">' + esc(label) + '</span>' +
+          (p.logged_at ? '<span class="p-when">' + esc(p.logged_at) + '</span>' : '') + '</div>' +
+        (p.drill ? '<div class="p-drill">' + esc(p.drill) + '</div>' : '') +
+        (p.note ? '<div class="p-note">' + esc(p.note) + '</div>' : '') +
+        deltaLine +
+      '</div>';
+    }
+
+    async function logDrill() {
+      if (!currentFocus || !currentFocus.focus) { toast("No drill to log right now.", true); return; }
+      const btn = $("#logDrillBtn");
+      if (btn) { btn.disabled = true; btn.innerHTML = "Logging…"; }
+      try {
+        const p = await api("/api/practice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ focus_metric: currentFocus.focus, drill: currentFocus.drill || "" })
+        });
+        const body = $("#practiceBody");
+        if (body) body.innerHTML = practiceMarkup(p);
+        toast("Drill logged — play a session to see if it tightens up");
+        if (btn) { btn.innerHTML = "&#10003; Logged"; }
+      } catch (e) {
+        toast("Couldn't log drill: " + e.message, true);
+        if (btn) { btn.disabled = false; btn.innerHTML = "&#10003; Log this drill"; }
+      }
     }
 
     /* makes_vs_misses -> table of rows, highlighting the top leak */
@@ -1263,7 +1530,15 @@
       return "";
     }
 
-    return { enter() { load(); } };
+    return {
+      init() {
+        // "Log this drill" is in the dynamic focus hero — delegate from the view root
+        $("#coachContent").addEventListener("click", (e) => {
+          if (e.target.closest("#logDrillBtn")) logDrill();
+        });
+      },
+      enter() { load(); }
+    };
   })();
 
   /* ============================================================
