@@ -31,3 +31,6 @@ mobile/node_modules/
 # Envs
 .venv/
 venv/
+
+# Editor / local dev (machine-specific preview launch config)
+.claude/

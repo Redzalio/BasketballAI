@@ -72,6 +72,55 @@ if _problems:
     else:
         print(" If a package truly isn't installed, run:")
         print('   "%s" -m pip install --user torch ultralytics opencv-python flask' % sys.executable)
+
+    # ----------------------------- DEEP PROBE ----------------------------- #
+    # Reports WHY the finder can't see the package, from inside THIS process.
+    print("-" * 66)
+    print(" DEEP PROBE")
+    import importlib.util as _ilu
+    import traceback as _tb
+
+    _site_dirs = [p for p in sys.path if p.lower().endswith("site-packages")]
+    print(" site-packages dirs on sys.path:")
+    for _sd in _site_dirs:
+        try:
+            _names = os.listdir(_sd)
+            print("   [listable, %d entries, 'torch' present=%s] %s"
+                  % (len(_names), ("torch" in _names), _sd))
+        except Exception as _e:
+            print("   [CANNOT LIST: %s: %s] %s" % (type(_e).__name__, _e, _sd))
+
+    print(" find_spec() resolution (where each package is actually found):")
+    for _m in ("torch", "ultralytics", "cv2", "flask"):
+        try:
+            _spec = _ilu.find_spec(_m)
+            print("   %-11s -> %s" % (_m, (_spec.origin if _spec else "None (NOT FOUND)")))
+        except Exception as _e:
+            print("   %-11s -> RAISED %s: %s" % (_m, type(_e).__name__, _e))
+
+    print(" torch on disk, as seen by THIS process:")
+    for _sd in _site_dirs:
+        _td = os.path.join(_sd, "torch")
+        _ti = os.path.join(_td, "__init__.py")
+        print("   in %s :" % _sd)
+        print("       isdir(torch)=%s  isfile(__init__)=%s  readable=%s"
+              % (os.path.isdir(_td), os.path.isfile(_ti), os.access(_ti, os.R_OK)))
+        if os.path.isfile(_ti):
+            try:
+                with open(_ti, "rb") as _f:
+                    _f.read(16)
+                print("       open(torch/__init__.py) OK")
+            except Exception as _e:
+                print("       open(torch/__init__.py) -> %s: %s" % (type(_e).__name__, _e))
+
+    print(" full traceback of 'import torch':")
+    try:
+        import torch  # noqa: F401
+    except Exception:
+        for _line in _tb.format_exc().splitlines():
+            print("     " + _line)
+    print("-" * 66)
+
     print(" Copy everything above and send it to Claude.")
     print("=" * 66)
     try:
