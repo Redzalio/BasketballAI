@@ -10,13 +10,16 @@ import cv2
 try:
     from detection.engine import HoopEngine
     from detection.zones import derive_zone
+    from detection import form_capture
 except ImportError:
     from engine import HoopEngine
     from zones import derive_zone
+    import form_capture
 
 from stats import db
 
 PROGRESS = {}  # file_id -> {status, percentage, stats, session_id, [message]}
+FORMS_DIR = Path(__file__).resolve().parent.parent / "processed" / "forms"
 
 
 def run_processing(file_id, input_path, output_path, mode="full_tracking",
@@ -46,9 +49,15 @@ def run_processing(file_id, input_path, output_path, mode="full_tracking",
                 form = event.get("form")
                 zone = event.get("zone") or derive_zone(eng.tracker.rim_center, form, frame, event)
                 bp = event.get("ball_path") or []
-                db.add_shot(sid, event["result"], t=round(idx / fps, 2), zone=zone,
-                            x=(bp[-1][0] if bp else None), y=(bp[-1][1] if bp else None),
-                            form=form)
+                shot_id = db.add_shot(sid, event["result"], t=round(idx / fps, 2), zone=zone,
+                                      x=(bp[-1][0] if bp else None), y=(bp[-1][1] if bp else None),
+                                      form=form, arc=event.get("arc"))
+                rimg = event.get("release_img")
+                if rimg is not None and shot_id:
+                    fn = "%d.jpg" % shot_id
+                    if form_capture.save(str(FORMS_DIR / fn), rimg,
+                                         event.get("release_kp"), event.get("release_hand"), form):
+                        db.set_form_image(shot_id, fn)
             writer.write(annotated)
             idx += 1
             if idx % 15 == 0:

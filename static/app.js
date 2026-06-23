@@ -124,6 +124,36 @@
     return { score: Math.round(avg), letter: letter };
   }
 
+  /* Pretty rows of a per-shot form object (raw form metrics, as returned by
+     /api/forms and /api/session shots[i].form). Returns [{label,text}] for the
+     keys that are present — used by the form gallery cards + lightbox. */
+  function formMetricRows(form) {
+    if (!form || typeof form !== "object") return [];
+    const rows = [];
+    const push = (label, v, unit) => {
+      if (v == null) return;
+      if (typeof v === "boolean") { rows.push({ label: label, text: v ? "Yes" : "No" }); return; }
+      const nv = num(v, null);
+      if (nv == null) return;
+      rows.push({ label: label, text: Math.round(nv) + (unit || "") });
+    };
+    push("Elbow", form.elbow_angle, "°");
+    push("Release", form.release_angle, "°");
+    push("Knee bend", form.knee_bend, "°");
+    push("Body lean", form.lean_deg, "°");
+    push("Symmetry", form.symmetry_deg, "°");
+    if (form.release_height_ratio != null) {
+      const r = num(form.release_height_ratio, null);
+      if (r != null) rows.push({ label: "Release height", text: fmtMetric(r) });
+    }
+    if (form.follow_through != null) {
+      const ft = form.follow_through === true || form.follow_through === "true";
+      rows.push({ label: "Follow-through", text: ft ? "Held" : "Dropped" });
+    }
+    if (form.hand) rows.push({ label: "Hand", text: cap(String(form.hand)) });
+    return rows;
+  }
+
   /* ============================================================
      Bars + gauges (reusable)
      ============================================================ */
@@ -467,6 +497,55 @@
     return parts.join("");
   }
 
+  /* Rolling fatigue line (session modal). rolling: [{shot,score}] in order.
+     Same visual language as consistencyTrendChart; x-axis is the shot number,
+     and an optional onsetShot draws a vertical "drift starts" marker. */
+  function fatigueChart(rolling, onsetShot) {
+    const W = 560, H = 150, padL = 30, padR = 14, padT = 14, padB = 22;
+    if (!rolling || rolling.length < 2) {
+      return '<div class="chart-wrap"><svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Rolling consistency, not enough data">' +
+        '<text class="svg-empty" x="' + (W/2) + '" y="' + (H/2) + '" text-anchor="middle">Not enough windows to chart yet.</text></svg></div>';
+    }
+    const data = rolling.slice();
+    const n = data.length;
+    const innerW = W - padL - padR, innerH = H - padT - padB;
+    const shots = data.map((d) => num(d.shot));
+    const minS = Math.min.apply(null, shots), maxS = Math.max.apply(null, shots);
+    const spanS = (maxS - minS) || 1;
+    const xFor = (sh) => padL + ((num(sh) - minS) / spanS) * innerW;
+    const yFor = (p) => padT + innerH - (Math.max(0, Math.min(100, num(p))) / 100) * innerH;
+
+    let parts = ['<div class="chart-wrap"><svg viewBox="0 0 ' + W + ' ' + H +
+      '" role="img" aria-label="Line chart of rolling shot-to-shot consistency by shot number">'];
+    [0, 50, 100].forEach((g) => {
+      const y = yFor(g);
+      parts.push('<line class="svg-grid" x1="' + padL + '" y1="' + y.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + y.toFixed(1) + '"/>');
+      parts.push('<text class="svg-axis" x="' + (padL - 6) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end">' + g + '</text>');
+    });
+    // onset marker
+    if (onsetShot != null && num(onsetShot) >= minS && num(onsetShot) <= maxS) {
+      const ox = xFor(onsetShot);
+      parts.push('<line class="svg-onset" x1="' + ox.toFixed(1) + '" y1="' + padT + '" x2="' + ox.toFixed(1) + '" y2="' + (padT + innerH) + '"/>');
+      parts.push('<text class="svg-onset-lbl" x="' + ox.toFixed(1) + '" y="' + (padT - 3) + '" text-anchor="middle">drift &#8595; #' + num(onsetShot) + '</text>');
+    }
+    const pts = data.map((d) => [xFor(d.shot), yFor(d.score)]);
+    const linePath = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+    const area = linePath + " L" + pts[n-1][0].toFixed(1) + " " + (padT + innerH) +
+      " L" + pts[0][0].toFixed(1) + " " + (padT + innerH) + " Z";
+    parts.push('<path class="svg-area-c" d="' + area + '"/>');
+    parts.push('<path class="svg-line-c" d="' + linePath + '"/>');
+    const step = Math.ceil(n / 7);
+    pts.forEach((p, i) => {
+      parts.push('<circle class="svg-dot-c" cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3.2"><title>through shot #' +
+        num(data[i].shot) + ": " + Math.round(num(data[i].score)) + '/100</title></circle>');
+      if (i % step === 0 || i === n - 1) {
+        parts.push('<text class="svg-axis" x="' + p[0].toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle">#' + num(data[i].shot) + '</text>');
+      }
+    });
+    parts.push('</svg></div>');
+    return parts.join("");
+  }
+
   /* "What to work on next" hero card from a focus object {label, why, drill}. */
   function focusHero(focus) {
     if (!focus || !focus.label) {
@@ -524,6 +603,51 @@
       tag = '<span class="pro-tag out"><span class="dot"></span>above pro</span>';
     }
     return '<div class="pro"><span class="pro-range">Pro: ' + rangeTxt + '</span>' + tag + '</div>';
+  }
+
+  /* ============================================================
+     ARC / ENTRY-ANGLE (shared)
+     Renders the arc_consistency block: a small overall gauge + the
+     entry-angle and arc-height consistency sub-cards (mean ± std,
+     0..100). Graceful when !enough. Used by Coaching (overview.arc)
+     and available to the session modal (insights.arc).
+     ============================================================ */
+  /* one arc sub-metric -> a cmetric-style card. sub = {mean,std,consistency}. */
+  function arcSubCard(label, sub, unit) {
+    if (!sub) return "";
+    const band = conBand(sub.consistency);
+    const cons = Math.round(num(sub.consistency));
+    unit = unit || "";
+    return '<div class="cmetric">' +
+      '<div class="top"><span class="name">' + esc(label) + '</span>' +
+        '<span class="mean">' + fmtMetric(num(sub.mean)) + unit +
+          ' <span class="pm">± ' + fmtMetric(num(sub.std)) + unit + '</span></span></div>' +
+      '<div class="sub"><span class="csub-label">Shot-to-shot consistency</span>' +
+        '<span class="csub-val ' + band + '">' + cons + '/100</span></div>' +
+      '<div class="ctrack"><div class="cfill ' + band + '" style="width:' + cons + '%"></div></div>' +
+    '</div>';
+  }
+
+  /* Full arc block body (no card wrapper). */
+  function arcBlock(arc) {
+    if (!arc || !arc.enough) {
+      const n = arc ? num(arc.n) : 0;
+      return '<div class="muted" style="font-size:14px">Not enough arc data yet' +
+        (n ? ' (' + n + ' tracked' + (n === 1 ? " arc" : " arcs") + ', need 3+)' : '') +
+        ' — track shots with the ball in view and your arc consistency shows up here.</div>';
+    }
+    let out = '<div class="arc-block">';
+    out += '<div class="arc-overall">' +
+      '<div class="arc-overall-num ' + conBand(arc.overall) + '">' + Math.round(num(arc.overall)) + '<span class="o">/100</span></div>' +
+      '<div class="arc-overall-lbl">Overall arc consistency<span class="sub">' + esc(conBandLabel(arc.overall)) + ' · ' + num(arc.n) + ' arcs</span></div>' +
+    '</div>';
+    const cards = arcSubCard("Entry angle", arc.entry_angle, "°") + arcSubCard("Arc height", arc.peak_height, "");
+    out += cards
+      ? '<div class="cmetric-grid" style="margin-top:14px">' + cards + '</div>'
+      : '<div class="muted" style="font-size:13px;margin-top:10px">Tracked arcs, but not enough of a single measure to score yet.</div>';
+    out += '<div class="arc-note">Entry angle is most accurate filmed from the side; shot-to-shot consistency is the reliable read from any fixed angle.</div>';
+    out += '</div>';
+    return out;
   }
 
   /* ============================================================
@@ -1071,6 +1195,8 @@
     const grade = formGrade(fs);
     const con = ins.consistency || null;
     const conScore = con && typeof con.consistency_score === "number" ? con.consistency_score : null;
+    const arc = ins.arc || null;
+    const fatigue = ins.fatigue || null;
 
     $("#modalTitle").textContent = "Session #" + num(s.id);
     const chip = '<span class="chip ' + (s.mode === "live" ? "live" : "video") + '">' + esc(s.mode || "") + '</span>';
@@ -1108,6 +1234,16 @@
     }
     body += '</div></div>';
 
+    // shot chart for THIS session (same builder as the dashboard)
+    body += '<div class="modal-section"><h3>Shot chart</h3>' +
+      courtChart(ins.zones) + courtLegend() + '</div>';
+
+    // arc & entry angle for this session
+    body += '<div class="modal-section"><h3>Arc &amp; entry angle</h3>' + arcBlock(arc) + '</div>';
+
+    // stamina / focus (fatigue)
+    body += '<div class="modal-section"><h3>Stamina / focus</h3>' + fatigueBlock(fatigue) + '</div>';
+
     // streaks
     const stk = ins.streaks || {};
     if (stk.longest_make != null || stk.longest_miss != null) {
@@ -1125,10 +1261,21 @@
         const ok = shotFormOk(sh.form);
         const chip2 = ok == null ? "" : '<span class="form-chip ' + (ok ? "ok" : "flag") + '">' + (ok ? "form ok" : "form flag") + '</span>';
         const t = sh.t != null ? '<span class="log-num" style="width:auto">@' + Number(sh.t).toFixed(1) + 's</span>' : '';
+        // arc entry-angle (when present) + an "arc left frame" tag if estimated/clipped
+        const a = sh.arc;
+        let arcTag = "";
+        if (a && a.ok) {
+          if (num(a.entry_angle_deg, null) != null) {
+            arcTag += '<span class="arc-pill" title="Image-space entry angle">' + Math.round(num(a.entry_angle_deg)) + '&deg; entry</span>';
+          }
+          if (a.off_frame_top || a.estimated) {
+            arcTag += '<span class="arc-pill est" title="Arc apex left the frame or was estimated">arc left frame</span>';
+          }
+        }
         return '<div class="log-row">' +
           '<span class="log-num">#' + num(sh.i) + '</span>' +
           '<span class="log-res ' + (isMake ? "make" : "miss") + '">' + (isMake ? "MAKE" : "MISS") + '</span>' +
-          '<span class="log-zone">' + esc(cap(sh.zone || "")) + '</span>' + t + chip2 + '</div>';
+          '<span class="log-zone">' + esc(cap(sh.zone || "")) + '</span>' + t + arcTag + chip2 + '</div>';
       }).join("") + '</div>';
     } else {
       body += '<div class="muted" style="font-size:14px">No individual shots recorded.</div>';
@@ -1156,6 +1303,36 @@
     sec = num(sec);
     const m = Math.floor(sec / 60), s = Math.round(sec % 60);
     return m + "m " + (s < 10 ? "0" : "") + s + "s";
+  }
+
+  /* Fatigue/stamina callout from insights.fatigue. Reuses the .drift block
+     visual language (holds = green, drifts = amber) + a rolling line. */
+  function fatigueBlock(f) {
+    if (!f || !f.enough) {
+      const n = f ? num(f.n) : 0;
+      return '<div class="muted" style="font-size:14px">Track ~10+ shots in a session to see fatigue' +
+        (n ? ' (this one has ' + n + ').' : '.') + '</div>';
+    }
+    const holds = f.verdict !== "drifts";
+    const onset = f.onset_shot != null ? num(f.onset_shot) : null;
+    let det = 'Rolling consistency went from ' + Math.round(num(f.baseline)) + ' early to ' +
+      Math.round(num(f.late)) + ' late';
+    if (onset != null) det += ' — form started sliding around shot #' + onset;
+    det += '.';
+    let html = '<div class="drift ' + (holds ? "holds" : "drops") + '">' +
+      '<span class="ico" aria-hidden="true">' + (holds ? "&#128170;" : "&#128201;") + '</span>' +
+      '<div class="txt"><div class="verdict ' + (holds ? "holds" : "drops") + '">' +
+        (holds ? "Form held all session" : "Consistency dropped") + '</div>' +
+        '<div class="det">' + esc(det) + (f.advice ? ' ' + esc(f.advice) : '') + '</div></div>' +
+      '<div class="pair"><div class="leg"><div class="k">Early</div><div class="v ' + conBand(f.baseline) + '">' + Math.round(num(f.baseline)) + '</div></div>' +
+        '<span class="arrow" aria-hidden="true">&rarr;</span>' +
+        '<div class="leg"><div class="k">Late</div><div class="v ' + conBand(f.late) + '">' + Math.round(num(f.late)) + '</div></div></div>' +
+    '</div>';
+    // rolling line under the callout
+    if (f.rolling && f.rolling.length >= 2) {
+      html += '<div style="margin-top:14px">' + fatigueChart(f.rolling, onset) + '</div>';
+    }
+    return html;
   }
 
   Views.sessions = (function () {
@@ -1250,7 +1427,7 @@
       }
 
       // pull the newest session for the detailed consistency report
-      let con = null, sessId = null, sessErr = false;
+      let con = null, sessId = null, sessErr = false, latestFatigue = null;
       try {
         const sd = await api("/api/sessions");
         const list = (sd && sd.sessions) || [];
@@ -1259,6 +1436,7 @@
           sessId = list.reduce((best, s) => (num(s.id) > num(best.id) ? s : best), list[0]).id;
           const full = await api("/api/session/" + encodeURIComponent(sessId));
           con = full && full.insights && full.insights.consistency;
+          latestFatigue = full && full.insights && full.insights.fatigue;
         }
       } catch (e) { sessErr = true; }
 
@@ -1289,6 +1467,16 @@
                 '</strong> (±' + fmtMetric(con.biggest_inconsistency.std) + esc(con.biggest_inconsistency.unit || "") + ').'
               : '') +
             '</div></div></div></div>';
+      }
+
+      // 2b) ARC & ENTRY ANGLE (lifetime aggregate from /api/overview.arc)
+      html += '<div class="card pad" style="margin-bottom:16px"><div class="card-title">Arc &amp; entry angle ' +
+        '<span class="sub">how repeatable your arc is</span></div>' + arcBlock(d.arc) + '</div>';
+
+      // 2c) latest-session fatigue one-liner (only when it actually drifted)
+      if (latestFatigue && latestFatigue.enough && latestFatigue.verdict === "drifts") {
+        html += '<div class="hotcold cold" style="margin-bottom:16px"><span class="ico" aria-hidden="true">&#128201;</span>' +
+          '<span>Last session: ' + esc(latestFatigue.advice || "consistency dropped late in the session.") + '</span></div>';
       }
 
       // hot/cold banner (kept — useful context, below the headline)
@@ -1542,6 +1730,140 @@
   })();
 
   /* ============================================================
+     FORM GALLERY VIEW + lightbox
+     Thumbnail grid of release frames (with skeleton/angles already
+     drawn server-side). Filter All/Makes/Misses; click -> lightbox
+     with the full-size image, this shot's form metrics + a link to
+     the session. Empty until the user processes new video.
+     ============================================================ */
+  function openLightbox(shot) {
+    const overlay = $("#formLightbox");
+    const body = $("#lightboxBody");
+    const isMake = shot.result === "make";
+    const rows = formMetricRows(shot.form);
+    const metaBits = [];
+    if (shot.zone) metaBits.push(esc(cap(shot.zone)));
+    if (shot.date) metaBits.push(esc(shot.date));
+    if (shot.t != null) metaBits.push("@" + Number(shot.t).toFixed(1) + "s");
+
+    let html = '<div class="lb-figure"><img src="' + esc(shot.image) + '" alt="Release frame for shot #' + num(shot.id) +
+      '" loading="lazy" onerror="this.classList.add(\'broken\')" /></div>';
+    html += '<div class="lb-info">';
+    html += '<div class="lb-info-head"><span class="log-res ' + (isMake ? "make" : "miss") + '">' +
+      (isMake ? "MAKE" : "MISS") + '</span>' +
+      (metaBits.length ? '<span class="lb-meta">' + metaBits.join(" &middot; ") + '</span>' : '') + '</div>';
+    if (rows.length) {
+      html += '<div class="lb-metrics">' + rows.map((r) =>
+        '<div class="lb-metric"><span class="k">' + esc(r.label) + '</span><span class="v">' + esc(r.text) + '</span></div>'
+      ).join("") + '</div>';
+    } else {
+      html += '<div class="muted" style="font-size:13px">No form metrics recorded for this shot.</div>';
+    }
+    if (shot.session_id != null) {
+      html += '<div class="lb-actions"><button class="btn sm" id="lbOpenSession" data-sid="' + num(shot.session_id) + '">Open session</button></div>';
+    }
+    html += '</div>';
+
+    body.innerHTML = html;
+    overlay.classList.add("open");
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeLightbox() {
+    $("#formLightbox").classList.remove("open");
+    // don't unlock scroll if the session modal is still open underneath
+    if (!$("#sessionModal").classList.contains("open")) document.body.style.overflow = "";
+  }
+
+  Views.forms = (function () {
+    let shots = [];          // cache of the last fetch
+    let filter = "all";      // all | make | miss
+    let loaded = false;
+
+    function filtered() {
+      if (filter === "all") return shots;
+      return shots.filter((s) => s.result === filter);
+    }
+
+    function render() {
+      const root = $("#formsContent");
+      if (!shots.length) {
+        root.innerHTML = emptyState("&#128247;", "No form snapshots yet",
+          "Track a live session or import a video and your release frames show up here.");
+        return;
+      }
+      const list = filtered();
+      if (!list.length) {
+        root.innerHTML = emptyState("&#128247;",
+          filter === "make" ? "No makes captured yet" : "No misses captured yet",
+          "Switch the filter, or track more shots to fill this in.");
+        return;
+      }
+      root.innerHTML = '<div class="form-grid">' + list.map(cardHtml).join("") + '</div>';
+    }
+
+    function cardHtml(s) {
+      const isMake = s.result === "make";
+      const f = s.form || {};
+      // a couple of key numbers on the card face
+      const bits = [];
+      if (num(f.elbow_angle, null) != null) bits.push('<span class="fg-stat">Elbow ' + Math.round(num(f.elbow_angle)) + '&deg;</span>');
+      if (num(f.release_angle, null) != null) bits.push('<span class="fg-stat">Release ' + Math.round(num(f.release_angle)) + '&deg;</span>');
+      else if (num(f.knee_bend, null) != null) bits.push('<span class="fg-stat">Knee ' + Math.round(num(f.knee_bend)) + '&deg;</span>');
+      return '<button class="form-card" data-id="' + num(s.id) + '" aria-label="Open release frame for shot #' + num(s.id) + '">' +
+        '<div class="fc-thumb"><img src="' + esc(s.image) + '" loading="lazy" alt="Release frame, shot #' + num(s.id) +
+          '" onerror="this.classList.add(\'broken\')" />' +
+          '<span class="fc-chip ' + (isMake ? "make" : "miss") + '">' + (isMake ? "MAKE" : "MISS") + '</span></div>' +
+        '<div class="fc-foot"><span class="fc-zone">' + esc(cap(s.zone || "—")) + '</span>' +
+          (bits.length ? '<span class="fc-stats">' + bits.join("") + '</span>' : '') + '</div>' +
+      '</button>';
+    }
+
+    async function load() {
+      const root = $("#formsContent");
+      // keep the filter buttons in sync with state (e.g. when re-entering the view)
+      $$("#formsFilter .filter-btn").forEach((b) => b.classList.toggle("active", b.dataset.filter === filter));
+      root.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      try {
+        const d = await api("/api/forms");
+        shots = (d && d.shots) || [];
+        loaded = true;
+        render();
+      } catch (e) {
+        root.innerHTML = emptyState("&#9888;", "Couldn't load form snapshots", e.message);
+      }
+    }
+
+    function setFilter(f) {
+      if (f === filter) return;
+      filter = f;
+      $$("#formsFilter .filter-btn").forEach((b) => b.classList.toggle("active", b.dataset.filter === f));
+      if (loaded) render();
+    }
+
+    function findShot(id) { return shots.filter((s) => num(s.id) === id)[0] || null; }
+
+    return {
+      init() {
+        $("#formsFilter").addEventListener("click", (e) => {
+          const b = e.target.closest(".filter-btn");
+          if (b) setFilter(b.dataset.filter);
+        });
+        $("#formsContent").addEventListener("click", (e) => {
+          const card = e.target.closest(".form-card");
+          if (card) { const sh = findShot(+card.dataset.id); if (sh) openLightbox(sh); }
+        });
+        // lightbox: "Open session" jumps to the session modal
+        $("#lightboxBody").addEventListener("click", (e) => {
+          const b = e.target.closest("#lbOpenSession");
+          if (b) { closeLightbox(); show("sessions"); openSession(+b.dataset.sid); }
+        });
+      },
+      enter() { load(); }
+    };
+  })();
+
+  /* ============================================================
      BOOT
      ============================================================ */
   function boot() {
@@ -1557,7 +1879,17 @@
     // modal close
     $("#modalClose").addEventListener("click", closeModal);
     $("#sessionModal").addEventListener("click", (e) => { if (e.target === $("#sessionModal")) closeModal(); });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#sessionModal").classList.contains("open")) closeModal(); });
+
+    // form lightbox close
+    $("#lightboxClose").addEventListener("click", closeLightbox);
+    $("#formLightbox").addEventListener("click", (e) => { if (e.target === $("#formLightbox")) closeLightbox(); });
+
+    // Escape closes the lightbox first (it sits above the session modal), then the modal
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      if ($("#formLightbox").classList.contains("open")) { closeLightbox(); return; }
+      if ($("#sessionModal").classList.contains("open")) closeModal();
+    });
 
     // expose for cross-view calls
     window.HoopTracker = { show: show, openSession: openSession };

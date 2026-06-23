@@ -95,25 +95,33 @@ class PoseAnalyzer:
         """frames: list of (idx, img) around the shot, chronological. Runs pose on
         each, picks the release (highest-wrist) frame, and computes the full
         motion metric set: release angle, knee bend at the dip, shoulder symmetry,
-        follow-through hold, etc. Returns {'form': {...}, 'feet': (x,y)} or None."""
-        seq = []
+        follow-through hold, etc. Returns {'form': {...}, 'feet': (x,y),
+        'release': {'xy', 'hand', 'src_idx'}} or None.
+
+        'release' exposes the release-frame keypoints + which source frame they came
+        from so the caller can save an annotated form snapshot. It does NOT change
+        any computed metric."""
+        seq = []   # (xy[17,2], source_frame_idx)
         for _idx, img in frames:
             kp = self.keypoints(img)
             if kp is not None:
-                seq.append(kp[0])
+                seq.append((kp[0], _idx))
         if not seq:
             return None
         if len(seq) == 1:
-            return {"form": self._metrics(seq[0]), "feet": self._feet(seq[0])}
+            xy0, idx0 = seq[0]
+            m0 = self._metrics(xy0)
+            return {"form": m0, "feet": self._feet(xy0),
+                    "release": {"xy": xy0.tolist(), "hand": m0.get("hand"), "src_idx": idx0}}
 
-        right = min(xy[R_WR][1] for xy in seq) <= min(xy[L_WR][1] for xy in seq)
+        right = min(s[0][R_WR][1] for s in seq) <= min(s[0][L_WR][1] for s in seq)
         if right:
             SH, EL, WR, HIP, KN, ANK, hand = R_SH, R_EL, R_WR, R_HIP, R_KNEE, R_ANK, "right"
         else:
             SH, EL, WR, HIP, KN, ANK, hand = L_SH, L_EL, L_WR, L_HIP, L_KNEE, L_ANK, "left"
 
-        rel_i = min(range(len(seq)), key=lambda i: seq[i][WR][1])   # highest wrist = release
-        r = seq[rel_i]
+        rel_i = min(range(len(seq)), key=lambda i: seq[i][0][WR][1])   # highest wrist = release
+        r, rel_src = seq[rel_i]
         elbow = _angle(r[SH], r[EL], r[WR])
         release_angle = abs(math.degrees(math.atan2(r[EL][1] - r[WR][1], abs(r[WR][0] - r[EL][0]) + 1e-6)))
         torso = r[SH] - r[HIP]
@@ -121,8 +129,8 @@ class PoseAnalyzer:
         symmetry = abs(math.degrees(math.atan2(r[R_SH][1] - r[L_SH][1], abs(r[R_SH][0] - r[L_SH][0]) + 1e-6)))
         torso_len = abs(r[SH][1] - r[HIP][1]) + 1e-6
         rel_height = float((r[SH][1] - r[WR][1]) / torso_len)
-        knee_bend = min(_angle(xy[HIP], xy[KN], xy[ANK]) for xy in seq)   # deepest dip
-        after = seq[rel_i + 1: rel_i + 4]
+        knee_bend = min(_angle(xy[HIP], xy[KN], xy[ANK]) for xy, _ in seq)   # deepest dip
+        after = [xy for xy, _ in seq[rel_i + 1: rel_i + 4]]
         ft_deg = (sum(_angle(xy[SH], xy[EL], xy[WR]) for xy in after) / len(after)) if after else elbow
 
         return {
@@ -138,6 +146,7 @@ class PoseAnalyzer:
                 "follow_through_deg": round(ft_deg, 1),
             },
             "feet": self._feet(r),
+            "release": {"xy": r.tolist(), "hand": hand, "src_idx": rel_src},
         }
 
     def form_metrics(self, frame):

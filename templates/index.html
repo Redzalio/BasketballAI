@@ -15,6 +15,7 @@
       <button data-view="dashboard">Dashboard</button>
       <button data-view="sessions">Sessions</button>
       <button data-view="coaching">Coaching</button>
+      <button data-view="forms">Form</button>
     </nav>
     <span class="spacer"></span>
     <span class="hint">Local shot tracker · 127.0.0.1:8791</span>
@@ -162,6 +163,24 @@
       </div>
     </section>
 
+    <!-- ===================== FORM GALLERY ===================== -->
+    <section class="view" id="view-forms">
+      <div class="view-head">
+        <div>
+          <h1>Form gallery</h1>
+          <p>Every shot's release frame, with your skeleton and angles drawn on it.</p>
+        </div>
+        <div class="row" id="formsFilter" role="group" aria-label="Filter snapshots">
+          <button class="btn ghost sm filter-btn active" data-filter="all">All</button>
+          <button class="btn ghost sm filter-btn" data-filter="make">Makes</button>
+          <button class="btn ghost sm filter-btn" data-filter="miss">Misses</button>
+        </div>
+      </div>
+      <div id="formsContent">
+        <div class="empty-state"><div class="spinner"></div></div>
+      </div>
+    </section>
+
   </main>
 
   <!-- ===================== SESSION MODAL ===================== -->
@@ -175,6 +194,14 @@
         <button class="modal-close" id="modalClose" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <!-- ===================== FORM LIGHTBOX ===================== -->
+  <div class="modal-overlay lightbox-overlay" id="formLightbox">
+    <div class="lightbox" role="dialog" aria-modal="true" aria-labelledby="lbTitle">
+      <button class="modal-close lightbox-close" id="lightboxClose" aria-label="Close">&times;</button>
+      <div class="lightbox-body" id="lightboxBody"></div>
     </div>
   </div>
 

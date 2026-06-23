@@ -15,6 +15,7 @@ from detection.engine import HoopEngine
 from detection.pose import PoseAnalyzer
 from detection.court import CourtMapper
 from detection.zones import derive_zone
+from detection import form_capture
 from detection import video_processor as vp
 
 app = Flask(__name__)
@@ -60,8 +61,14 @@ def _live_loop(camera):
         if event:
             form = event.get("form")
             zone = event.get("zone") or derive_zone(eng.tracker.rim_center, form, frame, event)
-            db.add_shot(LIVE["session_id"], event["result"], t=round(time.time(), 2),
-                        zone=zone, form=form)
+            shot_id = db.add_shot(LIVE["session_id"], event["result"], t=round(time.time(), 2),
+                                  zone=zone, form=form, arc=event.get("arc"))
+            rimg = event.get("release_img")
+            if rimg is not None and shot_id:
+                fn = "%d.jpg" % shot_id
+                if form_capture.save(str(config.PROCESSED_DIR / "forms" / fn), rimg,
+                                     event.get("release_kp"), event.get("release_hand"), form):
+                    db.set_form_image(shot_id, fn)
             streak = streak + 1 if event["result"] == "make" else 0
             LIVE["streak"] = streak
             LIVE["last_result"] = event["result"]
@@ -182,7 +189,8 @@ def session_detail(sid):
     if not obj:
         abort(404)
     shots = [{"i": i + 1, "result": s["result"], "zone": s["zone"], "t": s["t"],
-              "form": s.get("form", {})}
+              "form": s.get("form", {}), "arc": s.get("arc"),
+              "image": ("/api/form_image/%d" % s["id"]) if s.get("form_image") else None}
              for i, s in enumerate(obj["shots"])]
     return jsonify({"session": obj["session"], "shots": shots,
                     "insights": session_insights(obj)})
@@ -236,6 +244,27 @@ def add_practice():
         abort(400, "focus_metric required")
     practice.log_drill(d["focus_metric"], d.get("drill", ""), d.get("note", ""))
     return jsonify(practice.practice_with_progress())
+
+
+@app.route("/api/forms")
+def forms_gallery():
+    """Release-frame form snapshots, newest first, for the form gallery."""
+    out = []
+    for r in db.forms_gallery():
+        out.append({
+            "id": r["id"], "session_id": r["session_id"], "result": r["result"],
+            "zone": r.get("zone"), "t": r.get("t"), "date": r.get("started_at"),
+            "form": r.get("form", {}), "image": "/api/form_image/%d" % r["id"],
+        })
+    return jsonify({"shots": out})
+
+
+@app.route("/api/form_image/<int:shot_id>")
+def form_image(shot_id):
+    p = config.PROCESSED_DIR / "forms" / ("%d.jpg" % shot_id)
+    if not p.exists():
+        abort(404)
+    return send_file(str(p), mimetype="image/jpeg")
 
 
 if __name__ == "__main__":

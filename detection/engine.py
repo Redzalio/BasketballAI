@@ -27,6 +27,11 @@ except ImportError:
     from pose import PoseAnalyzer
     from court import CourtMapper
 
+try:
+    from stats import arc as arc_mod          # arc / entry-angle analytics (numpy-only)
+except Exception:
+    arc_mod = None
+
 ROOT = Path(__file__).resolve().parent.parent
 FALLBACK = ROOT / "models" / "best_fallback.pt"
 DETECTOR = ROOT / "models" / "detector.pt"
@@ -58,6 +63,7 @@ class HoopEngine:
         if self.court is not None and not self.court.available:
             self.court = None
         self.recent = deque(maxlen=45)   # (frame_idx, frame copy) for release-time pose
+        self.arc_buf = deque(maxlen=180) # (frame_idx, cx, cy) ball track for arc analytics
         self.frame_idx = 0
         self.flash = 0
         self.flash_color = (0, 0, 0)
@@ -84,11 +90,23 @@ class HoopEngine:
                 dets.append((canon, center, w, h, conf))
             boxes_draw.append((canon, x1, y1, x2, y2, conf))
 
+        balls = [(c, cf) for (k, c, w, h, cf) in dets if k == "ball"]
+        if balls:
+            bc = max(balls, key=lambda t: t[1])[0]
+            self.arc_buf.append((self.frame_idx, int(bc[0]), int(bc[1])))
+
         event = self.tracker.update(dets, self.frame_idx)
         if event:
             self.last_result = event["result"]
             self.flash = 18
             self.flash_color = (0, 200, 0) if event["result"] == "make" else (0, 0, 220)
+            if arc_mod is not None:
+                lo = event["frame"] - 55
+                pts = [(f, x, y) for (f, x, y) in self.arc_buf if lo <= f <= event["frame"] + 2]
+                try:
+                    event["arc"] = arc_mod.analyze_arc(pts, self.tracker.rim_center, frame.shape)
+                except Exception:
+                    pass
             if self.pose is not None:
                 up = event.get("up_frame", event["frame"])
                 # window across the shot: dip (~up-12) -> release -> follow-through (down)
@@ -107,6 +125,15 @@ class HoopEngine:
                         z = self.court.zone(res_p["feet"], self.tracker.rim_center, window[-1][1].shape)
                         if z:
                             event["zone"] = z
+                    rel = res_p.get("release")
+                    if rel:
+                        img = next((im for (i, im) in window if i == rel.get("src_idx")), None)
+                        if img is None and window:
+                            img = window[-1][1]
+                        if img is not None:
+                            event["release_img"] = img
+                            event["release_kp"] = rel.get("xy")
+                            event["release_hand"] = rel.get("hand")
 
         if draw:
             frame = self._draw(frame, boxes_draw)

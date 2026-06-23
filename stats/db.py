@@ -42,10 +42,14 @@ def init_db():
             );
             """
         )
-        # migration: full form-metric blob (added in the form/consistency upgrade)
+        # migrations: additive columns (safe to run repeatedly)
         cols = [r[1] for r in c.execute("PRAGMA table_info(shots)").fetchall()]
         if "form_json" not in cols:
             c.execute("ALTER TABLE shots ADD COLUMN form_json TEXT")
+        if "arc_json" not in cols:
+            c.execute("ALTER TABLE shots ADD COLUMN arc_json TEXT")
+        if "form_image" not in cols:
+            c.execute("ALTER TABLE shots ADD COLUMN form_image TEXT")
 
 
 def _now():
@@ -53,21 +57,28 @@ def _now():
 
 
 def _attach_form(d):
-    """Add a parsed 'form' dict to a shot row (from form_json, else legacy columns)."""
+    """Add parsed 'form' (and 'arc') dicts to a shot row (form_json, else legacy columns)."""
     fj = d.get("form_json")
+    form = None
     if fj:
         try:
-            d["form"] = json.loads(fj)
-            return d
+            form = json.loads(fj)
+        except Exception:
+            form = None
+    if form is None:
+        form = {}
+        for k in ("elbow_angle", "knee_angle", "lean_deg"):
+            if d.get(k) is not None:
+                form[k] = d[k]
+        if d.get("follow_through") is not None:
+            form["follow_through"] = bool(d["follow_through"])
+    d["form"] = form
+    aj = d.get("arc_json")
+    if aj:
+        try:
+            d["arc"] = json.loads(aj)
         except Exception:
             pass
-    f = {}
-    for k in ("elbow_angle", "knee_angle", "lean_deg"):
-        if d.get(k) is not None:
-            f[k] = d[k]
-    if d.get("follow_through") is not None:
-        f["follow_through"] = bool(d["follow_through"])
-    d["form"] = f
     return d
 
 
@@ -80,17 +91,21 @@ def create_session(mode, source=""):
         return cur.lastrowid
 
 
-def add_shot(session_id, result, t=None, zone=None, x=None, y=None, form=None):
+def add_shot(session_id, result, t=None, zone=None, x=None, y=None, form=None,
+             arc=None, form_image=None):
     form = form or {}
     with _conn() as c:
-        c.execute(
+        cur = c.execute(
             """INSERT INTO shots(session_id,t,result,made,zone,x,y,
-                                 elbow_angle,knee_angle,lean_deg,follow_through,form_json)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                 elbow_angle,knee_angle,lean_deg,follow_through,
+                                 form_json,arc_json,form_image)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (session_id, t, result, 1 if result == "make" else 0, zone, x, y,
              form.get("elbow_angle"), form.get("knee_angle"), form.get("lean_deg"),
-             1 if form.get("follow_through") else 0, json.dumps(form)),
+             1 if form.get("follow_through") else 0, json.dumps(form),
+             json.dumps(arc) if arc else None, form_image),
         )
+        return cur.lastrowid
 
 
 def finalize_session(session_id):
@@ -158,6 +173,23 @@ def delete_session(session_id):
     with _conn() as c:
         c.execute("DELETE FROM shots WHERE session_id=?", (session_id,))
         c.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+
+
+def set_form_image(shot_id, filename):
+    """Record the saved release-frame snapshot filename for a shot."""
+    with _conn() as c:
+        c.execute("UPDATE shots SET form_image=? WHERE id=?", (filename, shot_id))
+
+
+def forms_gallery(limit=300):
+    """Newest-first shots that have a saved form snapshot (for the form gallery)."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT sh.*, se.started_at, se.mode FROM shots sh
+               JOIN sessions se ON se.id = sh.session_id
+               WHERE sh.form_image IS NOT NULL AND sh.form_image <> ''
+               ORDER BY sh.id DESC LIMIT ?""", (limit,)).fetchall()
+    return [_attach_form(dict(r)) for r in rows]
 
 
 # ----------------------------- goals -----------------------------
