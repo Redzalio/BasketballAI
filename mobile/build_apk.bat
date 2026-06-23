@@ -15,7 +15,9 @@ call npx cap sync android || goto :err
 
 echo === Building debug APK ===
 cd android
-call gradlew.bat assembleDebug || goto :err
+REM 'clean' is intentional: after swapping the model, incremental Gradle can stay
+REM UP-TO-DATE and ship a stale APK with the old model. clean forces a full repackage.
+call gradlew.bat clean assembleDebug || goto :err
 
 echo.
 echo ============================================================
