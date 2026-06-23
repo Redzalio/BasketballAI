@@ -38,6 +38,7 @@ def run_processing(file_id, input_path, output_path, mode="full_tracking",
 
         sid = db.create_session("video", Path(input_path).name)
         db.set_session_video(sid, input_path)   # so corrections can re-extract hard-example frames
+        db.set_session_annotated(sid, output_path)
         PROGRESS[file_id]["session_id"] = sid
         draw = (mode != "stats_only")
         idx = 0

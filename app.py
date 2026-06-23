@@ -1,4 +1,5 @@
 """HoopTracker — Flask app: live webcam + video import + dashboard API."""
+import os
 from pathlib import Path
 import threading
 import time
@@ -11,6 +12,7 @@ import config
 from stats import db
 from stats.insights import session_insights, overview_insights
 from stats import goals, practice, hard_examples
+from stats import video_play
 from detection.engine import HoopEngine
 from detection.pose import PoseAnalyzer
 from detection.court import CourtMapper
@@ -192,7 +194,10 @@ def session_detail(sid):
               "manual": bool(s.get("manual")), "form": s.get("form", {}), "arc": s.get("arc"),
               "image": ("/api/form_image/%d" % s["id"]) if s.get("form_image") else None}
              for i, s in enumerate(obj["shots"])]
+    ann = obj["session"].get("annotated_path")
+    has_video = bool(ann) and os.path.exists(ann)
     return jsonify({"session": obj["session"], "shots": shots,
+                    "has_video": has_video,
                     "insights": session_insights(obj)})
 
 
@@ -200,6 +205,36 @@ def session_detail(sid):
 def session_delete(sid):
     db.delete_session(sid)
     return jsonify({"ok": True})
+
+
+@app.route("/api/session/<int:sid>/video/prepare", methods=["POST"])
+def session_video_prepare(sid):
+    obj = db.get_session(sid)
+    if not obj:
+        abort(404)
+    return jsonify(video_play.prepare(sid, obj["session"].get("annotated_path")))
+
+
+@app.route("/api/session/<int:sid>/video/status")
+def session_video_status(sid):
+    obj = db.get_session(sid)
+    if not obj:
+        abort(404)
+    return jsonify(video_play.status(sid, obj["session"].get("annotated_path")))
+
+
+@app.route("/api/session/<int:sid>/video")
+def session_video(sid):
+    obj = db.get_session(sid)
+    if not obj:
+        abort(404)
+    ann = obj["session"].get("annotated_path")
+    if not ann:
+        abort(404)
+    webm = video_play.webm_path_for(ann)
+    if not os.path.exists(webm):
+        abort(404)
+    return send_file(str(webm), mimetype="video/webm", conditional=True)
 
 
 # --------------------- manual correction + hard-example capture ---------------------

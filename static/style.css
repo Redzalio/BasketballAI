@@ -353,6 +353,14 @@ select.input:focus, input.input:focus { outline: none; border-color: var(--orang
 .svg-area { fill: rgba(255,122,26,0.12); }
 .svg-dot { fill: var(--orange); stroke: var(--bg); stroke-width: 2; }
 .svg-empty { fill: var(--text-mute); font-size: 13px; font-family: var(--font); }
+/* FG% trend extras: shot-volume bars, 3-game rolling avg, inline legend */
+.svg-vol { fill: var(--text-dim); opacity: 0.16; }
+.svg-vol-axis { fill: var(--text-mute); font-size: 9px; opacity: 0.8; }
+.svg-line-avg { fill: none; stroke: var(--amber); stroke-width: 2; stroke-dasharray: 5 4; stroke-linejoin: round; stroke-linecap: round; opacity: 0.9; }
+.svg-leg { fill: var(--text-mute); font-size: 11px; font-family: var(--font); }
+.svg-leg-fg { fill: var(--orange); }
+.svg-leg-avg { stroke: var(--amber); stroke-width: 2; stroke-dasharray: 5 4; }
+.svg-leg-vol { fill: var(--text-dim); opacity: 0.4; }
 
 /* Court */
 .court line, .court path, .court circle, .court rect.court-bg { stroke: var(--border-2); }
@@ -361,6 +369,7 @@ select.input:focus, input.input:focus { outline: none; border-color: var(--orang
 .court-zone { stroke: var(--card); stroke-width: 2; transition: fill .2s; cursor: default; }
 .court-zone-label { fill: var(--text); font-size: 12px; font-weight: 700; font-family: var(--font); text-anchor: middle; }
 .court-zone-sub { fill: rgba(255,255,255,0.85); font-size: 10px; font-family: var(--font); text-anchor: middle; }
+.court-zone-cnt { fill: var(--text-dim); font-size: 9px; font-family: var(--font); text-anchor: middle; font-variant-numeric: tabular-nums; }
 
 /* ---------- Bars (zones/form) ---------- */
 .bar-row { margin-bottom: 12px; }
@@ -1002,6 +1011,20 @@ table.sessions tr:last-child td { border-bottom: none; }
   line-height: 1.45;
 }
 .hardex-note:empty { display: none; }
+
+/* --- Film playback (session modal) --- */
+#filmBox .film-hint { font-size: 12.5px; margin-top: 8px; }
+#filmBox .film-loading {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 13.5px; padding: 14px 0;
+}
+#filmBox .film-error {
+  font-size: 13.5px; line-height: 1.5;
+  padding: 12px 14px; border-radius: var(--radius-sm);
+  background: var(--card-2); border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+}
+#filmBox video { display: block; }
 
 @media (max-width: 600px) {
   .add-shot-row .add-shot-result,

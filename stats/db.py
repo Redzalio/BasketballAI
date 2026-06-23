@@ -60,6 +60,8 @@ def init_db():
         scols = [r[1] for r in c.execute("PRAGMA table_info(sessions)").fetchall()]
         if "video_path" not in scols:
             c.execute("ALTER TABLE sessions ADD COLUMN video_path TEXT")
+        if "annotated_path" not in scols:
+            c.execute("ALTER TABLE sessions ADD COLUMN annotated_path TEXT")
 
 
 def _now():
@@ -254,6 +256,11 @@ def recompute_session(session_id):
 def set_session_video(session_id, path):
     with _conn() as c:
         c.execute("UPDATE sessions SET video_path=? WHERE id=?", (str(path), session_id))
+
+
+def set_session_annotated(session_id, path):
+    with _conn() as c:
+        c.execute("UPDATE sessions SET annotated_path=? WHERE id=?", (str(path), session_id))
 
 
 def log_correction(session_id, shot_id, kind, old_result=None, new_result=None, t=None):

@@ -230,7 +230,7 @@
      SVG: FG% over time trend line
      ============================================================ */
   function trendChart(trend) {
-    const W = 640, H = 240, padL = 38, padR = 16, padT = 18, padB = 28;
+    const W = 640, H = 248, padL = 38, padR = 30, padT = 18, padB = 34;
     if (!trend || !trend.length) {
       return '<div class="chart-wrap"><svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="FG% over time, no data">' +
         '<text class="svg-empty" x="' + (W/2) + '" y="' + (H/2) + '" text-anchor="middle">No trend data yet — track sessions to see your FG% over time.</text></svg></div>';
@@ -238,11 +238,12 @@
     const data = trend.slice();
     const n = data.length;
     const innerW = W - padL - padR, innerH = H - padT - padB;
+    const baseY = padT + innerH;
     const xFor = (i) => padL + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW);
     const yFor = (p) => padT + innerH - (Math.max(0, Math.min(100, num(p))) / 100) * innerH;
 
     let parts = ['<div class="chart-wrap"><svg viewBox="0 0 ' + W + ' ' + H +
-      '" role="img" aria-label="Line chart of field goal percentage over time">'];
+      '" role="img" aria-label="Line chart of field goal percentage over time with shot-volume bars and a 3-game rolling average">'];
 
     // gridlines + y labels (0,25,50,75,100)
     [0, 25, 50, 75, 100].forEach((g) => {
@@ -251,14 +252,51 @@
       parts.push('<text class="svg-axis" x="' + (padL - 6) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end">' + g + '</text>');
     });
 
+    // --- shot-volume bars (behind the line) — height ∝ attempts, capped at 45% of chart height ---
+    const maxAtt = data.reduce((m, d) => Math.max(m, num(d.attempts)), 0);
+    const volMaxH = innerH * 0.45;
+    // bar width: a slice of the per-point spacing, kept readable when sparse
+    const slot = n > 1 ? innerW / (n - 1) : innerW;
+    const barW = Math.max(5, Math.min(26, slot * 0.42));
+    if (maxAtt > 0) {
+      data.forEach((d, i) => {
+        const att = num(d.attempts);
+        if (att <= 0) return;
+        const h = (att / maxAtt) * volMaxH;
+        const x = xFor(i) - barW / 2;
+        const y = baseY - h;
+        parts.push('<rect class="svg-vol" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) +
+          '" width="' + barW.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="2"><title>' +
+          esc(data[i].date || "") + ": " + att + " attempt" + (att === 1 ? "" : "s") + '</title></rect>');
+      });
+      // tiny right-side hint for the volume axis (top of the bar band = maxAtt)
+      parts.push('<text class="svg-axis svg-vol-axis" x="' + (W - padR + 5) + '" y="' + (baseY - volMaxH + 3).toFixed(1) +
+        '" text-anchor="start">' + maxAtt + '</text>');
+      parts.push('<text class="svg-axis svg-vol-axis" x="' + (W - padR + 5) + '" y="' + (baseY + 3).toFixed(1) +
+        '" text-anchor="start">0</text>');
+    }
+
     const pts = data.map((d, i) => [xFor(i), yFor(d.fg_pct)]);
     const linePath = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
     // area
     if (n > 1) {
-      const area = linePath + " L" + pts[n-1][0].toFixed(1) + " " + (padT + innerH) +
-        " L" + pts[0][0].toFixed(1) + " " + (padT + innerH) + " Z";
+      const area = linePath + " L" + pts[n-1][0].toFixed(1) + " " + baseY +
+        " L" + pts[0][0].toFixed(1) + " " + baseY + " Z";
       parts.push('<path class="svg-area" d="' + area + '"/>');
     }
+
+    // --- rolling 3-game average (centered) — only when we have enough points ---
+    if (n >= 3) {
+      const rollPts = data.map((d, i) => {
+        const lo = Math.max(0, i - 1), hi = Math.min(n - 1, i + 1);
+        let sum = 0, c = 0;
+        for (let j = lo; j <= hi; j++) { sum += num(data[j].fg_pct); c++; }
+        return [xFor(i), yFor(sum / c)];
+      });
+      const rollPath = rollPts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+      parts.push('<path class="svg-line-avg" d="' + rollPath + '"/>');
+    }
+
     parts.push('<path class="svg-line" d="' + linePath + '"/>');
 
     // dots + x labels (thin them if many)
@@ -268,9 +306,25 @@
         esc(data[i].date || "") + ": " + pct1(data[i].fg_pct) + "% (" + num(data[i].attempts) + ' att)</title></circle>');
       if (i % step === 0 || i === n - 1) {
         const lbl = String(data[i].date || "").slice(5); // MM-DD
-        parts.push('<text class="svg-axis" x="' + p[0].toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle">' + esc(lbl) + '</text>');
+        parts.push('<text class="svg-axis" x="' + p[0].toFixed(1) + '" y="' + (H - 14) + '" text-anchor="middle">' + esc(lbl) + '</text>');
       }
     });
+
+    // --- inline legend (subtle, bottom) ---
+    const legY = H - 3;
+    let lx = padL;
+    parts.push('<circle class="svg-leg-fg" cx="' + lx + '" cy="' + (legY - 3) + '" r="3.5"/>');
+    parts.push('<text class="svg-leg" x="' + (lx + 8) + '" y="' + legY + '">FG%</text>');
+    if (n >= 3) {
+      lx += 52;
+      parts.push('<line class="svg-leg-avg" x1="' + lx + '" y1="' + (legY - 3) + '" x2="' + (lx + 16) + '" y2="' + (legY - 3) + '"/>');
+      parts.push('<text class="svg-leg" x="' + (lx + 22) + '" y="' + legY + '">3-game avg</text>');
+      lx += 92;
+    } else {
+      lx += 52;
+    }
+    parts.push('<rect class="svg-leg-vol" x="' + lx + '" y="' + (legY - 8) + '" width="9" height="9" rx="1.5"/>');
+    parts.push('<text class="svg-leg" x="' + (lx + 14) + '" y="' + legY + '">attempts</text>');
 
     parts.push('</svg></div>');
     return parts.join("");
@@ -282,15 +336,20 @@
      placed by simple heuristics on their key names; unknown
      keys get auto-placed in a fan so the set is never hardcoded.
      ============================================================ */
-  function shadeFor(p, hasData) {
-    if (!hasData) return "#1b1f26";
+  function shadeFor(p, attempts) {
+    const att = num(attempts);
+    if (att <= 0) return "#1b1f26";
     p = num(p);
-    // interpolate red(0%) -> amber(50%) -> green(100%)
+    // hue by FG%: interpolate red(0%) -> amber(50%) -> green(100%)
     const c1 = [255, 90, 90], c2 = [255, 194, 74], c3 = [57, 217, 138];
     let a, b, t;
     if (p <= 50) { a = c1; b = c2; t = p / 50; } else { a = c2; b = c3; t = (p - 50) / 50; }
     const mix = a.map((v, i) => Math.round(v + (b[i] - v) * t));
-    const alpha = 0.30 + 0.45 * Math.min(1, p / 100);
+    // saturation/alpha by VOLUME: small-sample zones stay faint so they don't
+    // shout. Ramp from ~0.14 up toward the full ~0.75 by ~9 attempts.
+    const VOL_CAP = 9;
+    const vol = Math.min(1, att / VOL_CAP);
+    const alpha = 0.14 + (0.30 + 0.45 * Math.min(1, p / 100) - 0.14) * vol;
     return "rgba(" + mix[0] + "," + mix[1] + "," + mix[2] + "," + alpha.toFixed(2) + ")";
   }
 
@@ -355,13 +414,16 @@
         " A" + arcR + " " + arcR + " 0 0 1 " + p1o[0].toFixed(1) + " " + p1o[1].toFixed(1) +
         " L" + p1i[0].toFixed(1) + " " + p1i[1].toFixed(1) +
         " A" + innerR + " " + innerR + " 0 0 0 " + p0i[0].toFixed(1) + " " + p0i[1].toFixed(1) + " Z";
-      parts.push('<path class="court-zone" d="' + wedge + '" fill="' + shadeFor(p, att > 0) + '"><title>' +
+      parts.push('<path class="court-zone" d="' + wedge + '" fill="' + shadeFor(p, att) + '"><title>' +
         esc(cap(k)) + ": " + num(z.makes) + "/" + att + (att ? " · " + pct1(p) + "%" : " · no attempts") + '</title></path>');
       // label at mid radius
       const lbl = toXY(center, 150);
       parts.push('<text class="court-zone-label" x="' + lbl[0].toFixed(1) + '" y="' + lbl[1].toFixed(1) + '">' + esc(cap(k)) + '</text>');
       if (att > 0) {
         parts.push('<text class="court-zone-sub" x="' + lbl[0].toFixed(1) + '" y="' + (lbl[1] + 15).toFixed(1) + '">' + pct1(p) + '%</text>');
+        // raw makes/attempts under the % so it's scannable without hovering
+        parts.push('<text class="court-zone-cnt" x="' + lbl[0].toFixed(1) + '" y="' + (lbl[1] + 28).toFixed(1) + '">' +
+          num(z.makes) + '/' + att + '</text>');
       } else {
         parts.push('<text class="court-zone-sub" x="' + lbl[0].toFixed(1) + '" y="' + (lbl[1] + 15).toFixed(1) + '">—</text>');
       }
@@ -390,7 +452,7 @@
       '<span><span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:var(--red);vertical-align:-1px;margin-right:5px"></span>Cold</span>' +
       '<span><span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:var(--amber);vertical-align:-1px;margin-right:5px"></span>~50%</span>' +
       '<span><span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:var(--green);vertical-align:-1px;margin-right:5px"></span>Hot</span>' +
-      '<span style="margin-left:auto">Shade = FG% · hover a zone for makes/attempts</span></div>';
+      '<span style="margin-left:auto">Hue = FG% · fainter = fewer attempts (volume-aware)</span></div>';
   }
 
   /* ============================================================
@@ -1180,8 +1242,16 @@
      handlers know which session to re-render after a flip/add/delete.
      (Buttons also carry data-sid, but this is a safety net.) */
   let currentSessionId = null;
+  /* Film playback: the lazy transcode poll loop. Module-scoped so it can be
+     cleared whenever the modal re-renders (openSession runs on every shot
+     edit) or closes — otherwise a stale poll could inject a <video> into a
+     closed or re-pointed modal. Guarded further by comparing the polled sid
+     against currentSessionId before touching the DOM. */
+  let videoPollTimer = null;
+  function stopVideoPoll() { if (videoPollTimer) { clearInterval(videoPollTimer); videoPollTimer = null; } }
 
   async function openSession(id) {
+    stopVideoPoll();
     currentSessionId = id;
     const overlay = $("#sessionModal");
     $("#modalTitle").textContent = "Session #" + id;
@@ -1220,6 +1290,17 @@
         ? '<div class="tile"><div class="label">Consistency</div><div class="value ' + conBand(conScore) + '">' + Math.round(num(conScore)) + '<small> / 100</small></div></div>'
         : '<div class="tile"><div class="label">Form grade</div><div class="value">' + (grade ? grade.letter : "—") + '</div></div>') +
     '</div></div>';
+
+    // film — in-browser playback of the annotated video (lazy; large file,
+    // so it only transcodes + loads on click). data-sid keeps the delegated
+    // handler pinned to the right session.
+    if (d.has_video) {
+      body += '<div class="modal-section"><h3>Film</h3>' +
+        '<div id="filmBox" data-sid="' + num(s.id) + '">' +
+          '<button type="button" class="btn primary" id="watchFilmBtn" data-sid="' + num(s.id) + '">&#9654; Watch film</button>' +
+          '<div class="film-hint muted">Plays your annotated clip with shot calls. Large file — loads on demand.</div>' +
+        '</div></div>';
+    }
 
     // what to work on (focus) for this session
     if (con && con.focus && con.focus.label) {
@@ -1426,7 +1507,72 @@
     }
   }
 
+  /* ---- Film playback (in-browser, lazy transcode) ----
+     The server transcodes mp4v->webm on demand. We POST .../video/prepare to
+     kick it off, then either swap in a <video> (ready) or poll .../video/status
+     until it's ready or errors. Every DOM write re-checks that the modal is
+     still showing this same session (sid === currentSessionId) so a poll that
+     resolves after the modal closed / re-pointed can't write into it. */
+  function filmVideoMarkup(sid) {
+    return '<video controls preload="metadata" playsinline ' +
+      'style="width:100%;border-radius:12px;background:#000" ' +
+      'src="/api/session/' + encodeURIComponent(sid) + '/video"></video>';
+  }
+  function filmErrorMarkup() {
+    return '<div class="film-error muted">Couldn\'t prepare this video for playback. ' +
+      'You can still download it from the Import screen.</div>';
+  }
+  /* Render film-box state into #filmBox, but only if we're still on this sid. */
+  function setFilmState(sid, html) {
+    if (num(sid) !== num(currentSessionId)) return false;
+    const box = $("#filmBox");
+    if (!box || +box.dataset.sid !== num(sid)) return false;
+    box.innerHTML = html;
+    return true;
+  }
+
+  async function watchFilm(sid) {
+    stopVideoPoll();
+    if (!setFilmState(sid, '<div class="film-loading muted"><span class="spinner"></span> Preparing video…</div>')) return;
+
+    let r;
+    try {
+      r = await api("/api/session/" + encodeURIComponent(sid) + "/video/prepare", { method: "POST" });
+    } catch (e) {
+      setFilmState(sid, filmErrorMarkup());
+      return;
+    }
+    if (!r || r.state === "error") { setFilmState(sid, filmErrorMarkup()); return; }
+    if (r.state === "ready") { setFilmState(sid, filmVideoMarkup(sid)); return; }
+
+    // transcoding — show progress + poll
+    setFilmState(sid, filmProgressMarkup(r.pct));
+    stopVideoPoll();
+    videoPollTimer = setInterval(async () => {
+      // bail (and stop the loop) if the modal moved on
+      if (num(sid) !== num(currentSessionId) || !$("#filmBox")) { stopVideoPoll(); return; }
+      let st;
+      try { st = await api("/api/session/" + encodeURIComponent(sid) + "/video/status"); }
+      catch (e) { return; } // transient — keep polling
+      if (!st) return;
+      if (st.state === "ready") {
+        stopVideoPoll();
+        setFilmState(sid, filmVideoMarkup(sid));
+      } else if (st.state === "error" || st.state === "none") {
+        stopVideoPoll();
+        setFilmState(sid, filmErrorMarkup());
+      } else {
+        setFilmState(sid, filmProgressMarkup(st.pct));
+      }
+    }, 800);
+  }
+  function filmProgressMarkup(pct) {
+    const p = Math.max(0, Math.min(100, num(pct)));
+    return '<div class="film-loading muted"><span class="spinner"></span> Preparing video… ' + Math.round(p) + '%</div>';
+  }
+
   function closeModal() {
+    stopVideoPoll();
     $("#sessionModal").classList.remove("open");
     document.body.style.overflow = "";
   }
@@ -1525,6 +1671,12 @@
         $("#modalBody").addEventListener("click", (e) => {
           const b = e.target.closest("#deleteSessionBtn");
           if (b) { del(+b.dataset.id); return; }
+          // film — load + play the annotated video on demand
+          const watch = e.target.closest("#watchFilmBtn");
+          if (watch) {
+            watchFilm(watch.dataset.sid != null ? +watch.dataset.sid : currentSessionId);
+            return;
+          }
           // per-shot edit controls (data-shot-id = real db id, data-sid = session)
           const flip = e.target.closest(".shot-btn.flip");
           if (flip) {
