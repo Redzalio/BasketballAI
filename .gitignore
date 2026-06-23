@@ -14,6 +14,15 @@ runs/
 *.mp4
 *.avi
 *.mov
+*.webm
+
+# Models / runtime binaries (regenerable: ultralytics export + npm install)
+*.onnx
+*.wasm
+
+# Mobile (Capacitor) build artifacts
+mobile/node_modules/
+*.apk
 
 # Secrets
 .env

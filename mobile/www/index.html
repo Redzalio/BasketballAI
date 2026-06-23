@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <title>HoopTracker</title>
+  <style>
+    :root { --orange:#ff7a1a; --green:#39d98a; --red:#ff5a5a; --bg:#0b0d10; }
+    * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    html,body { margin:0; height:100%; background:var(--bg); color:#fff;
+      font-family:-apple-system,Roboto,Segoe UI,system-ui,sans-serif; overflow:hidden; }
+    #stage { position:fixed; inset:0; }
+    #cam, #overlay { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+    #overlay { pointer-events:none; }
+
+    /* HUD: big glanceable score top-center */
+    #hud { position:absolute; top:env(safe-area-inset-top,12px); left:0; right:0;
+      display:flex; flex-direction:column; align-items:center; gap:2px;
+      text-shadow:0 2px 8px rgba(0,0,0,.85); pointer-events:none; padding-top:10px; }
+    #score { font-size:18vw; font-weight:800; line-height:1; letter-spacing:-2px; }
+    #score .slash { color:var(--orange); margin:0 .12em; }
+    #pct { font-size:7vw; font-weight:700; color:var(--orange); }
+
+    /* make/miss flash */
+    #flash { position:absolute; inset:0; opacity:0; pointer-events:none;
+      display:flex; align-items:center; justify-content:center;
+      font-size:16vw; font-weight:900; transition:opacity .12s; }
+    #flash.show { opacity:1; }
+    #flash.make { background:radial-gradient(circle, rgba(57,217,138,.35), transparent 60%); color:var(--green); }
+    #flash.miss { background:radial-gradient(circle, rgba(255,90,90,.30), transparent 60%); color:var(--red); }
+
+    #status { position:absolute; left:0; right:0; bottom:120px; text-align:center;
+      font-size:3.4vw; color:#cdd3da; opacity:.85; pointer-events:none; padding:0 16px; }
+
+    #controls { position:absolute; left:0; right:0; bottom:env(safe-area-inset-bottom,18px);
+      display:flex; gap:14px; justify-content:center; align-items:center; padding:0 18px 14px; }
+    button { border:none; border-radius:999px; font-weight:800; color:#fff;
+      padding:18px 30px; font-size:5vw; min-width:46vw; backdrop-filter:blur(6px); }
+    #recBtn { background:var(--orange); }
+    #recBtn.recording { background:var(--red); }
+    #recBtn:disabled { background:#3a4048; color:#8a93a0; }
+    #resetBtn { background:rgba(255,255,255,.14); min-width:30vw; }
+    .rec-dot { display:inline-block; width:.5em; height:.5em; border-radius:50%;
+      background:#fff; margin-right:.5em; vertical-align:middle; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="overlay"></canvas>
+    <div id="hud">
+      <div id="score"><span id="makes">0</span><span class="slash">/</span><span id="attempts">0</span></div>
+      <div id="pct">0%</div>
+    </div>
+    <div id="flash"></div>
+    <div id="status">Loading detector…</div>
+    <div id="controls">
+      <button id="recBtn" disabled><span class="rec-dot"></span>Start</button>
+      <button id="resetBtn">Reset</button>
+    </div>
+  </div>
+
+  <script src="ort/ort.min.js"></script>
+  <script src="shot_logic.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

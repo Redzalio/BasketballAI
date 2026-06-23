@@ -1,0 +1,8 @@
+{
+  "appId": "com.zalio.hooptracker",
+  "appName": "HoopTracker",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true
+  }
+}
