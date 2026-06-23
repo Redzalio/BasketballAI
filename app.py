@@ -181,8 +181,7 @@ def session_detail(sid):
     if not obj:
         abort(404)
     shots = [{"i": i + 1, "result": s["result"], "zone": s["zone"], "t": s["t"],
-              "form": {"elbow_angle": s["elbow_angle"], "knee_angle": s["knee_angle"],
-                       "lean_deg": s["lean_deg"], "follow_through": bool(s["follow_through"])}}
+              "form": s.get("form", {})}
              for i, s in enumerate(obj["shots"])]
     return jsonify({"session": obj["session"], "shots": shots,
                     "insights": session_insights(obj)})

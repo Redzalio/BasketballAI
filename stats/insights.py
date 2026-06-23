@@ -2,9 +2,10 @@
 from collections import defaultdict
 
 try:
-    from . import db
+    from . import db, consistency
 except ImportError:
     import db
+    import consistency
 
 
 def _streaks(shots):
@@ -26,11 +27,13 @@ def _form_summary(shots):
     vals = defaultdict(list)
     ft = []
     for s in shots:
+        f = s.get("form") if isinstance(s.get("form"), dict) else s
         for k in ("elbow_angle", "knee_angle", "lean_deg"):
-            if s.get(k) is not None:
-                vals[k].append(s[k])
-        if s.get("follow_through") is not None:
-            ft.append(1 if s["follow_through"] else 0)
+            if isinstance(f.get(k), (int, float)):
+                vals[k].append(f[k])
+        fttv = f.get("follow_through")
+        if fttv is not None:
+            ft.append(1 if fttv else 0)
     out = {k: round(sum(v) / len(v), 1) for k, v in vals.items() if v}
     if ft:
         out["follow_through_pct"] = round(100 * sum(ft) / len(ft))
@@ -74,7 +77,8 @@ def session_insights(session_obj):
             tips.append(f"Strongest from {best[0]} ({best[1]['pct']:.0f}%), weakest from {worst[0]} ({worst[1]['pct']:.0f}%) — add reps from {worst[0]}.")
     if not tips:
         tips.append("Solid, consistent session — keep the same routine and rhythm.")
-    return {"form_summary": fs, "zones": zones, "streaks": _streaks(shots), "tips": tips}
+    return {"form_summary": fs, "zones": zones, "streaks": _streaks(shots), "tips": tips,
+            "consistency": consistency.session_consistency(shots)}
 
 
 def overview_insights(sessions):
@@ -87,7 +91,19 @@ def overview_insights(sessions):
     qualified = [s for s in sessions if s["attempts"] >= 5]
     best_fg = max(qualified, key=lambda s: s["fg_pct"], default=None)
     most_makes = max(sessions, key=lambda s: s["makes"], default=None)
-    longest = max((_streaks(db.get_session(s["id"])["shots"])["longest_make"] for s in sessions), default=0)
+
+    # one pass over sessions: longest streak + per-session consistency trend + latest report
+    longest = 0
+    con_trend = []
+    latest_con = None
+    for s in reversed(sessions):           # oldest -> newest
+        sh = db.get_session(s["id"])["shots"]
+        longest = max(longest, _streaks(sh)["longest_make"])
+        if s["attempts"]:
+            rep = consistency.session_consistency(sh)
+            con_trend.append({"date": s["date"], "score": rep["consistency_score"]})
+            latest_con = rep
+
     pbs = {
         "best_fg_session": ({"id": best_fg["id"], "fg_pct": best_fg["fg_pct"], "attempts": best_fg["attempts"]}
                             if best_fg else None),
@@ -116,4 +132,7 @@ def overview_insights(sessions):
         tips.append("Mechanics look consistent — keep logging sessions to surface trends.")
 
     return {"trend": trend, "by_zone": by_zone, "form_avg": fs,
-            "personal_bests": pbs, "tips": tips, "hot_cold": hot_cold}
+            "personal_bests": pbs, "tips": tips, "hot_cold": hot_cold,
+            "consistency_trend": con_trend,
+            "consistency_score": (latest_con or {}).get("consistency_score", 0),
+            "focus": (latest_con or {}).get("focus")}

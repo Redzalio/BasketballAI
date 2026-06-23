@@ -2,6 +2,7 @@
 from pathlib import Path
 import sqlite3
 import datetime
+import json
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "hooptracker.db"
 
@@ -33,10 +34,33 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_shots_session ON shots(session_id);
             """
         )
+        # migration: full form-metric blob (added in the form/consistency upgrade)
+        cols = [r[1] for r in c.execute("PRAGMA table_info(shots)").fetchall()]
+        if "form_json" not in cols:
+            c.execute("ALTER TABLE shots ADD COLUMN form_json TEXT")
 
 
 def _now():
     return datetime.datetime.now().isoformat(sep=" ", timespec="seconds")
+
+
+def _attach_form(d):
+    """Add a parsed 'form' dict to a shot row (from form_json, else legacy columns)."""
+    fj = d.get("form_json")
+    if fj:
+        try:
+            d["form"] = json.loads(fj)
+            return d
+        except Exception:
+            pass
+    f = {}
+    for k in ("elbow_angle", "knee_angle", "lean_deg"):
+        if d.get(k) is not None:
+            f[k] = d[k]
+    if d.get("follow_through") is not None:
+        f["follow_through"] = bool(d["follow_through"])
+    d["form"] = f
+    return d
 
 
 def create_session(mode, source=""):
@@ -53,11 +77,11 @@ def add_shot(session_id, result, t=None, zone=None, x=None, y=None, form=None):
     with _conn() as c:
         c.execute(
             """INSERT INTO shots(session_id,t,result,made,zone,x,y,
-                                 elbow_angle,knee_angle,lean_deg,follow_through)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                                 elbow_angle,knee_angle,lean_deg,follow_through,form_json)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             (session_id, t, result, 1 if result == "make" else 0, zone, x, y,
              form.get("elbow_angle"), form.get("knee_angle"), form.get("lean_deg"),
-             1 if form.get("follow_through") else 0),
+             1 if form.get("follow_through") else 0, json.dumps(form)),
         )
 
 
@@ -96,7 +120,7 @@ def get_session(session_id):
     s = dict(s)
     s["duration_s"] = _duration_s(s)
     s["date"] = s.get("started_at")
-    return {"session": s, "shots": [dict(x) for x in shots]}
+    return {"session": s, "shots": [_attach_form(dict(x)) for x in shots]}
 
 
 def list_sessions(limit=200):
@@ -119,7 +143,7 @@ def all_shots():
             """SELECT sh.*, se.started_at FROM shots sh
                JOIN sessions se ON se.id = sh.session_id
                ORDER BY sh.id""").fetchall()
-    return [dict(r) for r in rows]
+    return [_attach_form(dict(r)) for r in rows]
 
 
 def delete_session(session_id):

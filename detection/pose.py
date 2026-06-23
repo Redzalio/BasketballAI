@@ -91,6 +91,55 @@ class PoseAnalyzer:
         xy, _ = kp
         return {"form": self._metrics(xy), "feet": self._feet(xy)}
 
+    def analyze_motion(self, frames):
+        """frames: list of (idx, img) around the shot, chronological. Runs pose on
+        each, picks the release (highest-wrist) frame, and computes the full
+        motion metric set: release angle, knee bend at the dip, shoulder symmetry,
+        follow-through hold, etc. Returns {'form': {...}, 'feet': (x,y)} or None."""
+        seq = []
+        for _idx, img in frames:
+            kp = self.keypoints(img)
+            if kp is not None:
+                seq.append(kp[0])
+        if not seq:
+            return None
+        if len(seq) == 1:
+            return {"form": self._metrics(seq[0]), "feet": self._feet(seq[0])}
+
+        right = min(xy[R_WR][1] for xy in seq) <= min(xy[L_WR][1] for xy in seq)
+        if right:
+            SH, EL, WR, HIP, KN, ANK, hand = R_SH, R_EL, R_WR, R_HIP, R_KNEE, R_ANK, "right"
+        else:
+            SH, EL, WR, HIP, KN, ANK, hand = L_SH, L_EL, L_WR, L_HIP, L_KNEE, L_ANK, "left"
+
+        rel_i = min(range(len(seq)), key=lambda i: seq[i][WR][1])   # highest wrist = release
+        r = seq[rel_i]
+        elbow = _angle(r[SH], r[EL], r[WR])
+        release_angle = abs(math.degrees(math.atan2(r[EL][1] - r[WR][1], abs(r[WR][0] - r[EL][0]) + 1e-6)))
+        torso = r[SH] - r[HIP]
+        lean = abs(math.degrees(math.atan2(torso[0], -torso[1] - 1e-6)))
+        symmetry = abs(math.degrees(math.atan2(r[R_SH][1] - r[L_SH][1], abs(r[R_SH][0] - r[L_SH][0]) + 1e-6)))
+        torso_len = abs(r[SH][1] - r[HIP][1]) + 1e-6
+        rel_height = float((r[SH][1] - r[WR][1]) / torso_len)
+        knee_bend = min(_angle(xy[HIP], xy[KN], xy[ANK]) for xy in seq)   # deepest dip
+        after = seq[rel_i + 1: rel_i + 4]
+        ft_deg = (sum(_angle(xy[SH], xy[EL], xy[WR]) for xy in after) / len(after)) if after else elbow
+
+        return {
+            "form": {
+                "hand": hand,
+                "elbow_angle": round(elbow, 1),
+                "release_angle": round(release_angle, 1),
+                "knee_bend": round(knee_bend, 1),
+                "lean_deg": round(lean, 1),
+                "symmetry_deg": round(symmetry, 1),
+                "release_height_ratio": round(rel_height, 2),
+                "follow_through": bool(r[WR][1] < r[NOSE][1]),
+                "follow_through_deg": round(ft_deg, 1),
+            },
+            "feet": self._feet(r),
+        }
+
     def form_metrics(self, frame):
         a = self.analyze(frame)
         return a["form"] if a else None

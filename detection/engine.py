@@ -90,19 +90,23 @@ class HoopEngine:
             self.flash = 18
             self.flash_color = (0, 200, 0) if event["result"] == "make" else (0, 0, 220)
             if self.pose is not None:
-                target = event.get("up_frame", event["frame"])   # ~release moment
-                snap = min(self.recent, key=lambda fr: abs(fr[0] - target), default=None)
-                if snap is not None:
-                    try:
-                        res_p = self.pose.analyze(snap[1])
-                    except Exception:
-                        res_p = None
-                    if res_p:
-                        event["form"] = res_p["form"]
-                        if self.court is not None and res_p.get("feet"):
-                            z = self.court.zone(res_p["feet"], self.tracker.rim_center, snap[1].shape)
-                            if z:
-                                event["zone"] = z
+                up = event.get("up_frame", event["frame"])
+                # window across the shot: dip (~up-12) -> release -> follow-through (down)
+                window = [(i, im) for (i, im) in self.recent if up - 12 <= i <= event["frame"]]
+                if len(window) > 22:
+                    window = window[::2]
+                if not window and self.recent:
+                    window = [min(self.recent, key=lambda fr: abs(fr[0] - up))]
+                try:
+                    res_p = self.pose.analyze_motion(window)
+                except Exception:
+                    res_p = None
+                if res_p:
+                    event["form"] = res_p["form"]
+                    if self.court is not None and res_p.get("feet"):
+                        z = self.court.zone(res_p["feet"], self.tracker.rim_center, window[-1][1].shape)
+                        if z:
+                            event["zone"] = z
 
         if draw:
             frame = self._draw(frame, boxes_draw)
