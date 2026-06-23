@@ -28,6 +28,19 @@ METRIC_META = {
     "follow_through_deg":   {"label": "Follow-through",     "unit": "°", "good": (150, 180), "tol": 22},
 }
 
+# Elite/pro reference ranges per metric (tighter than 'good') — hardcoded coaching targets.
+PRO = {
+    "elbow_angle": (168, 180),
+    "release_angle": (47, 54),
+    "knee_bend": (108, 132),
+    "knee_angle": (120, 160),
+    "lean_deg": (0, 4),
+    "release_height_ratio": (1.1, 1.7),
+    "set_point_ratio": (0.7, 1.05),
+    "symmetry_deg": (0, 3),
+    "follow_through_deg": (165, 180),
+}
+
 DRILLS = {
     "elbow_angle":   "Form shooting: 2x25 from 5 ft, freeze a fully snapped elbow + follow-through 2s each rep.",
     "release_angle": "Arc work: shoot over a chair or a partner's reach from the elbow; groove a 50-55° release, 50 makes.",
@@ -64,11 +77,16 @@ def metric_stats(shots):
         mean = statistics.mean(vals)
         sd = statistics.pstdev(vals)
         score = max(0.0, min(100.0, 100.0 * (1.0 - sd / meta["tol"])))
+        pro = PRO.get(key)
+        vs_pro = None
+        if pro:
+            vs_pro = "in" if pro[0] <= mean <= pro[1] else ("low" if mean < pro[0] else "high")
         out[key] = {
             "label": meta["label"], "unit": meta["unit"], "good": list(meta["good"]),
             "mean": round(mean, 2), "std": round(sd, 2), "n": len(vals),
             "consistency": round(score),
             "in_range": meta["good"][0] <= mean <= meta["good"][1],
+            "pro": list(pro) if pro else None, "vs_pro": vs_pro,
         }
     return out
 

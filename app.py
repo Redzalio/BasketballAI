@@ -10,6 +10,7 @@ from flask import Flask, render_template, request, jsonify, Response, send_file,
 import config
 from stats import db
 from stats.insights import session_insights, overview_insights
+from stats import goals, practice
 from detection.engine import HoopEngine
 from detection.pose import PoseAnalyzer
 from detection.court import CourtMapper
@@ -201,6 +202,40 @@ def overview():
     lifetime = {"makes": makes, "attempts": attempts, "shots": attempts, "sessions": len(sess),
                 "fg_pct": round(100 * makes / attempts, 1) if attempts else 0.0}
     return jsonify({"lifetime": lifetime, **overview_insights(sess)})
+
+
+@app.route("/api/goals", methods=["GET"])
+def get_goals():
+    return jsonify(goals.goals_with_progress())
+
+
+@app.route("/api/goals", methods=["POST"])
+def add_goal():
+    d = request.get_json(silent=True) or {}
+    if not d.get("metric") or d.get("target") is None:
+        abort(400, "metric and target required")
+    db.create_goal(d["metric"], float(d["target"]), d.get("label", ""))
+    return jsonify(goals.goals_with_progress())
+
+
+@app.route("/api/goals/<int:gid>", methods=["DELETE"])
+def remove_goal(gid):
+    db.delete_goal(gid)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/practice", methods=["GET"])
+def get_practice():
+    return jsonify(practice.practice_with_progress())
+
+
+@app.route("/api/practice", methods=["POST"])
+def add_practice():
+    d = request.get_json(silent=True) or {}
+    if not d.get("focus_metric"):
+        abort(400, "focus_metric required")
+    practice.log_drill(d["focus_metric"], d.get("drill", ""), d.get("note", ""))
+    return jsonify(practice.practice_with_progress())
 
 
 if __name__ == "__main__":

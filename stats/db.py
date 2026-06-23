@@ -32,6 +32,14 @@ def init_db():
                 FOREIGN KEY(session_id) REFERENCES sessions(id)
             );
             CREATE INDEX IF NOT EXISTS idx_shots_session ON shots(session_id);
+            CREATE TABLE IF NOT EXISTS goals(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT, metric TEXT, target REAL, label TEXT, achieved_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS practice_log(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                logged_at TEXT, focus_metric TEXT, drill TEXT, note TEXT, baseline_std REAL
+            );
             """
         )
         # migration: full form-metric blob (added in the form/consistency upgrade)
@@ -150,6 +158,45 @@ def delete_session(session_id):
     with _conn() as c:
         c.execute("DELETE FROM shots WHERE session_id=?", (session_id,))
         c.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+
+
+# ----------------------------- goals -----------------------------
+def create_goal(metric, target, label=""):
+    with _conn() as c:
+        cur = c.execute("INSERT INTO goals(created_at, metric, target, label) VALUES(?,?,?,?)",
+                        (_now(), metric, target, label))
+        return cur.lastrowid
+
+
+def list_goals():
+    with _conn() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM goals ORDER BY id DESC").fetchall()]
+
+
+def set_goal_achieved(goal_id, when=None):
+    with _conn() as c:
+        c.execute("UPDATE goals SET achieved_at=? WHERE id=? AND achieved_at IS NULL",
+                  (when or _now(), goal_id))
+
+
+def delete_goal(goal_id):
+    with _conn() as c:
+        c.execute("DELETE FROM goals WHERE id=?", (goal_id,))
+
+
+# ----------------------------- practice log -----------------------------
+def log_practice(focus_metric, drill, note="", baseline_std=None):
+    with _conn() as c:
+        cur = c.execute(
+            "INSERT INTO practice_log(logged_at, focus_metric, drill, note, baseline_std) VALUES(?,?,?,?,?)",
+            (_now(), focus_metric, drill, note, baseline_std))
+        return cur.lastrowid
+
+
+def list_practice(limit=100):
+    with _conn() as c:
+        return [dict(r) for r in
+                c.execute("SELECT * FROM practice_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()]
 
 
 # Ensure the schema exists whenever this module is imported (any entry point).
