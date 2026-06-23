@@ -10,7 +10,7 @@ from flask import Flask, render_template, request, jsonify, Response, send_file,
 import config
 from stats import db
 from stats.insights import session_insights, overview_insights
-from stats import goals, practice
+from stats import goals, practice, hard_examples
 from detection.engine import HoopEngine
 from detection.pose import PoseAnalyzer
 from detection.court import CourtMapper
@@ -188,8 +188,8 @@ def session_detail(sid):
     obj = db.get_session(sid)
     if not obj:
         abort(404)
-    shots = [{"i": i + 1, "result": s["result"], "zone": s["zone"], "t": s["t"],
-              "form": s.get("form", {}), "arc": s.get("arc"),
+    shots = [{"i": i + 1, "id": s["id"], "result": s["result"], "zone": s["zone"], "t": s["t"],
+              "manual": bool(s.get("manual")), "form": s.get("form", {}), "arc": s.get("arc"),
               "image": ("/api/form_image/%d" % s["id"]) if s.get("form_image") else None}
              for i, s in enumerate(obj["shots"])]
     return jsonify({"session": obj["session"], "shots": shots,
@@ -200,6 +200,59 @@ def session_detail(sid):
 def session_delete(sid):
     db.delete_session(sid)
     return jsonify({"ok": True})
+
+
+# --------------------- manual correction + hard-example capture ---------------------
+def _capture(sid, shot_id, t, kind, old_result, new_result):
+    """Recompute the session and bank hard-example frames (best-effort)."""
+    db.log_correction(sid, shot_id, kind, old_result, new_result, t)
+    sess = (db.get_session(sid) or {}).get("session")
+    hard_examples.capture_for_correction(sess, shot_id, t, kind, old_result, new_result)
+
+
+@app.route("/api/shot/<int:shot_id>", methods=["PATCH"])
+def edit_shot(shot_id):
+    result = (request.get_json(silent=True) or {}).get("result")
+    if result not in ("make", "miss"):
+        abort(400, "result must be 'make' or 'miss'")
+    prev = db.get_shot(shot_id)
+    if not prev:
+        abort(404)
+    sid = db.update_shot_result(shot_id, result)
+    stats = db.recompute_session(sid)
+    _capture(sid, shot_id, prev.get("t"), "flip", prev.get("result"), result)
+    return jsonify({"ok": True, "stats": stats})
+
+
+@app.route("/api/shot/<int:shot_id>", methods=["DELETE"])
+def remove_shot(shot_id):
+    prev = db.get_shot(shot_id)
+    if not prev:
+        abort(404)
+    sid = db.delete_shot(shot_id)
+    stats = db.recompute_session(sid)
+    _capture(sid, shot_id, prev.get("t"), "delete", prev.get("result"), None)
+    return jsonify({"ok": True, "stats": stats, "session_id": sid})
+
+
+@app.route("/api/session/<int:sid>/shot", methods=["POST"])
+def add_shot_manual(sid):
+    d = request.get_json(silent=True) or {}
+    result = d.get("result")
+    if result not in ("make", "miss"):
+        abort(400, "result must be 'make' or 'miss'")
+    if not db.get_session(sid):
+        abort(404)
+    t = d.get("t")
+    new_id = db.add_manual_shot(sid, result, t=t, zone=d.get("zone"))
+    stats = db.recompute_session(sid)
+    _capture(sid, new_id, t, "add", None, result)
+    return jsonify({"ok": True, "stats": stats, "shot_id": new_id})
+
+
+@app.route("/api/hard_examples")
+def hard_examples_manifest():
+    return jsonify(hard_examples.manifest())
 
 
 @app.route("/api/overview")

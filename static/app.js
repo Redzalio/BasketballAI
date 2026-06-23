@@ -1176,7 +1176,13 @@
   /* ============================================================
      SESSIONS VIEW + detail modal
      ============================================================ */
+  /* The session currently shown in the modal. Used so per-shot edit
+     handlers know which session to re-render after a flip/add/delete.
+     (Buttons also carry data-sid, but this is a safety net.) */
+  let currentSessionId = null;
+
   async function openSession(id) {
+    currentSessionId = id;
     const overlay = $("#sessionModal");
     $("#modalTitle").textContent = "Session #" + id;
     $("#modalMeta").textContent = "";
@@ -1253,8 +1259,9 @@
       '</div></div>';
     }
 
-    // shot list
+    // shot list (+ per-shot edit controls and an "add a missed shot" form)
     body += '<div class="modal-section"><h3>Shots (' + shots.length + ')</h3>';
+    body += addShotForm(num(s.id));
     if (shots.length) {
       body += '<div class="shotlist">' + shots.slice().sort((a,b)=>num(a.i)-num(b.i)).map((sh) => {
         const isMake = sh.result === "make";
@@ -1272,14 +1279,32 @@
             arcTag += '<span class="arc-pill est" title="Arc apex left the frame or was estimated">arc left frame</span>';
           }
         }
+        // hand-corrected shots get a small "edited" dot
+        const editedDot = sh.manual === true
+          ? '<span class="edited-dot" title="Hand-corrected shot">&#9679;<span class="edited-lbl">edited</span></span>'
+          : '';
+        // edit controls: flip make/miss + delete. data-shot-id is the REAL db id.
+        const sid = num(sh.id, null);
+        let controls = "";
+        if (sid != null) {
+          const flipTo = isMake ? "miss" : "make";
+          controls = '<span class="shot-edit">' +
+            '<button type="button" class="shot-btn flip" data-shot-id="' + sid + '" data-result="' + flipTo + '" data-sid="' + num(s.id) + '" ' +
+              'title="Flip to ' + flipTo + '" aria-label="Flip this shot to ' + flipTo + '">&#8646; ' + (isMake ? "miss" : "make") + '</button>' +
+            '<button type="button" class="shot-btn del" data-shot-id="' + sid + '" data-sid="' + num(s.id) + '" ' +
+              'title="Delete this shot" aria-label="Delete this shot">&times;</button>' +
+          '</span>';
+        }
         return '<div class="log-row">' +
           '<span class="log-num">#' + num(sh.i) + '</span>' +
           '<span class="log-res ' + (isMake ? "make" : "miss") + '">' + (isMake ? "MAKE" : "MISS") + '</span>' +
-          '<span class="log-zone">' + esc(cap(sh.zone || "")) + '</span>' + t + arcTag + chip2 + '</div>';
+          '<span class="log-zone">' + esc(cap(sh.zone || "")) + '</span>' + t + arcTag + chip2 + editedDot + controls + '</div>';
       }).join("") + '</div>';
     } else {
       body += '<div class="muted" style="font-size:14px">No individual shots recorded.</div>';
     }
+    // hard-example indicator (subtle footer) — populated async after paint
+    body += '<div class="hardex-note muted" id="hardExNote" aria-live="polite"></div>';
     body += '</div>';
 
     // tips
@@ -1292,6 +1317,113 @@
       '<button class="btn danger" id="deleteSessionBtn" data-id="' + num(s.id) + '">Delete this session</button></div>';
 
     $("#modalBody").innerHTML = body;
+
+    // hard-example count comes from its own endpoint; load after the main paint
+    loadHardExamples();
+  }
+
+  /* "Add a missed shot" mini-form for the shot list. sid = session id. */
+  function addShotForm(sid) {
+    return '<div class="add-shot" data-sid="' + sid + '">' +
+      '<div class="add-shot-title">Add a shot we missed</div>' +
+      '<div class="add-shot-row">' +
+        '<select class="input add-shot-result" aria-label="Shot result">' +
+          '<option value="">Make or miss…</option>' +
+          '<option value="make">Make</option>' +
+          '<option value="miss">Miss</option>' +
+        '</select>' +
+        '<input class="input add-shot-t" type="number" step="0.1" min="0" inputmode="decimal" ' +
+          'placeholder="Time (s)" aria-label="Time in the clip, seconds" ' +
+          'title="Time in the clip — lets us grab training frames" />' +
+        '<input class="input add-shot-zone" type="text" maxlength="40" ' +
+          'placeholder="Zone (optional)" aria-label="Zone" />' +
+        '<button type="button" class="btn sm add-shot-btn" data-sid="' + sid + '">Add shot</button>' +
+      '</div>' +
+      '<div class="add-shot-hint muted">Optional time lets us grab training frames from imported clips.</div>' +
+    '</div>';
+  }
+
+  /* Flip a shot make<->miss, then re-render the modal. */
+  async function flipShot(shotId, newResult, sid) {
+    try {
+      const r = await api("/api/shot/" + encodeURIComponent(shotId), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ result: newResult })
+      });
+      const sessionId = sid != null ? sid : currentSessionId;
+      if (sessionId != null) await openSession(sessionId);
+      const st = r && r.stats;
+      toast("Shot updated" + (st ? " — " + num(st.makes) + "/" + num(st.attempts) +
+        " (" + pct1(st.fg_pct) + "%)" : ""));
+    } catch (e) {
+      toast("Couldn't update shot: " + e.message, true);
+    }
+  }
+
+  /* Delete a phantom shot (after confirm), then re-render the modal. */
+  async function deleteShot(shotId, sid) {
+    if (!confirm("Delete this shot? It will be removed from your stats.")) return;
+    try {
+      const r = await api("/api/shot/" + encodeURIComponent(shotId), { method: "DELETE" });
+      const sessionId = sid != null ? sid : (r && r.session_id != null ? r.session_id : currentSessionId);
+      if (sessionId != null) await openSession(sessionId);
+      const st = r && r.stats;
+      toast("Shot deleted" + (st ? " — " + num(st.makes) + "/" + num(st.attempts) +
+        " (" + pct1(st.fg_pct) + "%)" : ""));
+    } catch (e) {
+      toast("Couldn't delete shot: " + e.message, true);
+    }
+  }
+
+  /* Add a missed/extra shot from the modal form, then re-render. */
+  async function addMissedShot(sid, wrap) {
+    const resultSel = $(".add-shot-result", wrap);
+    const tInp = $(".add-shot-t", wrap);
+    const zoneInp = $(".add-shot-zone", wrap);
+    const result = resultSel ? resultSel.value : "";
+    if (result !== "make" && result !== "miss") {
+      toast("Pick make or miss first.", true);
+      if (resultSel) resultSel.focus();
+      return;
+    }
+    const payload = { result: result };
+    const tVal = tInp ? tInp.value.trim() : "";
+    if (tVal !== "" && isFinite(+tVal)) payload.t = +tVal;
+    const zVal = zoneInp ? zoneInp.value.trim() : "";
+    if (zVal !== "") payload.zone = zVal;
+    try {
+      const r = await api("/api/session/" + encodeURIComponent(sid) + "/shot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const sessionId = sid != null ? sid : currentSessionId;
+      if (sessionId != null) await openSession(sessionId);
+      const st = r && r.stats;
+      toast("Shot added" + (st ? " — " + num(st.makes) + "/" + num(st.attempts) +
+        " (" + pct1(st.fg_pct) + "%)" : ""));
+    } catch (e) {
+      toast("Couldn't add shot: " + e.message, true);
+    }
+  }
+
+  /* Subtle footer: how many correction frames are banked for a future tune. */
+  async function loadHardExamples() {
+    const note = $("#hardExNote");
+    if (!note) return;
+    let h;
+    try { h = await api("/api/hard_examples"); }
+    catch (e) { note.textContent = ""; return; }   // stay quiet on failure
+    const ex = num(h && h.examples);
+    const fr = num(h && h.frames);
+    if (ex > 0) {
+      note.innerHTML = '&#127919; ' + fr + ' frame' + (fr === 1 ? "" : "s") +
+        ' banked from your corrections — fuel for a future model tune.';
+    } else {
+      note.innerHTML = '&#127919; Correcting a shot on an imported video banks its frames as ' +
+        'training examples for a future model tune.';
+    }
   }
 
   function closeModal() {
@@ -1392,7 +1524,38 @@
         // modal delete (delegated on body since modal content is dynamic)
         $("#modalBody").addEventListener("click", (e) => {
           const b = e.target.closest("#deleteSessionBtn");
-          if (b) del(+b.dataset.id);
+          if (b) { del(+b.dataset.id); return; }
+          // per-shot edit controls (data-shot-id = real db id, data-sid = session)
+          const flip = e.target.closest(".shot-btn.flip");
+          if (flip) {
+            flipShot(flip.dataset.shotId, flip.dataset.result,
+              flip.dataset.sid != null ? +flip.dataset.sid : currentSessionId);
+            return;
+          }
+          const delShot = e.target.closest(".shot-btn.del");
+          if (delShot) {
+            deleteShot(delShot.dataset.shotId,
+              delShot.dataset.sid != null ? +delShot.dataset.sid : currentSessionId);
+            return;
+          }
+          // add-a-missed-shot
+          const addBtn = e.target.closest(".add-shot-btn");
+          if (addBtn) {
+            const wrap = addBtn.closest(".add-shot");
+            addMissedShot(addBtn.dataset.sid != null ? +addBtn.dataset.sid : currentSessionId, wrap);
+            return;
+          }
+        });
+        // Enter inside the add-shot form submits it
+        $("#modalBody").addEventListener("keydown", (e) => {
+          if (e.key !== "Enter") return;
+          const wrap = e.target.closest(".add-shot");
+          if (!wrap) return;
+          if (e.target.closest(".add-shot-t, .add-shot-zone, .add-shot-result")) {
+            e.preventDefault();
+            const sid = wrap.dataset.sid != null ? +wrap.dataset.sid : currentSessionId;
+            addMissedShot(sid, wrap);
+          }
         });
       },
       enter() { load(); }

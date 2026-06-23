@@ -40,6 +40,11 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 logged_at TEXT, focus_metric TEXT, drill TEXT, note TEXT, baseline_std REAL
             );
+            CREATE TABLE IF NOT EXISTS corrections(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                logged_at TEXT, session_id INTEGER, shot_id INTEGER,
+                kind TEXT, old_result TEXT, new_result TEXT, t REAL
+            );
             """
         )
         # migrations: additive columns (safe to run repeatedly)
@@ -50,6 +55,11 @@ def init_db():
             c.execute("ALTER TABLE shots ADD COLUMN arc_json TEXT")
         if "form_image" not in cols:
             c.execute("ALTER TABLE shots ADD COLUMN form_image TEXT")
+        if "manual" not in cols:
+            c.execute("ALTER TABLE shots ADD COLUMN manual INTEGER DEFAULT 0")
+        scols = [r[1] for r in c.execute("PRAGMA table_info(sessions)").fetchall()]
+        if "video_path" not in scols:
+            c.execute("ALTER TABLE sessions ADD COLUMN video_path TEXT")
 
 
 def _now():
@@ -190,6 +200,73 @@ def forms_gallery(limit=300):
                WHERE sh.form_image IS NOT NULL AND sh.form_image <> ''
                ORDER BY sh.id DESC LIMIT ?""", (limit,)).fetchall()
     return [_attach_form(dict(r)) for r in rows]
+
+
+# ----------------------- manual correction + capture -----------------------
+def get_shot(shot_id):
+    with _conn() as c:
+        r = c.execute("SELECT * FROM shots WHERE id=?", (shot_id,)).fetchone()
+    return _attach_form(dict(r)) if r else None
+
+
+def update_shot_result(shot_id, result):
+    """Flip a shot's result (make<->miss); returns its session_id (or None)."""
+    made = 1 if result == "make" else 0
+    with _conn() as c:
+        r = c.execute("SELECT session_id FROM shots WHERE id=?", (shot_id,)).fetchone()
+        if not r:
+            return None
+        c.execute("UPDATE shots SET result=?, made=?, manual=1 WHERE id=?", (result, made, shot_id))
+        return r["session_id"]
+
+
+def delete_shot(shot_id):
+    """Delete a (phantom) shot; returns its session_id (or None)."""
+    with _conn() as c:
+        r = c.execute("SELECT session_id FROM shots WHERE id=?", (shot_id,)).fetchone()
+        if not r:
+            return None
+        c.execute("DELETE FROM shots WHERE id=?", (shot_id,))
+        return r["session_id"]
+
+
+def add_manual_shot(session_id, result, t=None, zone=None):
+    """Insert a shot the tracker missed; returns the new shot id."""
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO shots(session_id,t,result,made,zone,manual,form_json)
+               VALUES(?,?,?,?,?,1,?)""",
+            (session_id, t, result, 1 if result == "make" else 0, zone, json.dumps({})))
+        return cur.lastrowid
+
+
+def recompute_session(session_id):
+    """Recompute makes/attempts/fg_pct from shot rows (preserves timestamps)."""
+    with _conn() as c:
+        row = c.execute("SELECT COUNT(*) a, COALESCE(SUM(made),0) m FROM shots WHERE session_id=?",
+                        (session_id,)).fetchone()
+        a, m = row["a"] or 0, row["m"] or 0
+        fg = round(100.0 * m / a, 1) if a else 0.0
+        c.execute("UPDATE sessions SET makes=?, attempts=?, fg_pct=? WHERE id=?", (m, a, fg, session_id))
+    return {"makes": m, "attempts": a, "fg_pct": fg}
+
+
+def set_session_video(session_id, path):
+    with _conn() as c:
+        c.execute("UPDATE sessions SET video_path=? WHERE id=?", (str(path), session_id))
+
+
+def log_correction(session_id, shot_id, kind, old_result=None, new_result=None, t=None):
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO corrections(logged_at,session_id,shot_id,kind,old_result,new_result,t)
+               VALUES(?,?,?,?,?,?,?)""",
+            (_now(), session_id, shot_id, kind, old_result, new_result, t))
+
+
+def corrections_count():
+    with _conn() as c:
+        return c.execute("SELECT COUNT(*) n FROM corrections").fetchone()["n"]
 
 
 # ----------------------------- goals -----------------------------

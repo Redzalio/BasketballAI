@@ -37,6 +37,7 @@ def run_processing(file_id, input_path, output_path, mode="full_tracking",
         writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
 
         sid = db.create_session("video", Path(input_path).name)
+        db.set_session_video(sid, input_path)   # so corrections can re-extract hard-example frames
         PROGRESS[file_id]["session_id"] = sid
         draw = (mode != "stats_only")
         idx = 0

@@ -9,6 +9,7 @@ processed/
 data/*.db
 datasets/
 runs/
+training/hard_examples/
 
 # Media / sample clips (bring your own; keep the repo lean)
 *.mp4
