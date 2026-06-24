@@ -69,15 +69,27 @@
     #zoomBtn { background:rgba(255,255,255,.14); min-width:18vw; font-size:4.5vw; }
     #zoomBtn.zoomed { background:rgba(255,122,26,.75); }
 
-    /* Landscape: phone rotated sideways for court shooting — shrink fixed elements */
+    /* Landscape: phone rotated sideways for court shooting — compact + dodge system UI */
     @media (orientation: landscape) {
-      #score { font-size: 14vh; }
-      #pct { font-size: 6vh; }
-      #status { bottom: 72px; font-size: 2.4vw; }
-      button { padding: 10px 22px; font-size: 3.8vw; }
-      #recBtn, #resetBtn { min-width: 28vw; }
-      #zoomBtn { min-width: 12vw; }
-      #voiceBtn, #setupBtn { width: 48px; height: 48px; font-size: 21px; }
+      #score { font-size: 12vh; }
+      #pct { font-size: 5vh; }
+      #status { bottom: 64px; font-size: 2.2vw; }
+      button { padding: 9px 20px; font-size: 3.4vw; }
+      #recBtn, #resetBtn { min-width: 26vw; }
+      #zoomBtn { min-width: 11vw; }
+      /* corner buttons: shrink + clear the status bar / camera cutout via safe-area insets */
+      #voiceBtn, #setupBtn { width: 46px; height: 46px; font-size: 20px; margin-top: 0;
+        top: calc(6px + env(safe-area-inset-top, 0px)); }
+      #setupBtn { left: calc(12px + env(safe-area-inset-left, 0px)); }
+      #voiceBtn { right: calc(12px + env(safe-area-inset-right, 0px)); }
+      #hud { padding-top: calc(4px + env(safe-area-inset-top, 0px)); }
+      /* setup card: was full-screen-huge — compact + proportional to the short height */
+      #setup { padding: 0 calc(60px + env(safe-area-inset-left, 0px)) 0 calc(60px + env(safe-area-inset-right, 0px)); }
+      .setup-card { min-width: 0; max-width: 60vw; padding: 11px 18px; border-radius: 14px; }
+      .setup-title { font-size: 3.4vh; margin-bottom: 6px; }
+      .chk { font-size: 3vh; margin: 4px 0; }
+      .setup-verdict { font-size: 3.4vh; margin-top: 8px; }
+      .setup-hint { font-size: 2.1vh; margin-top: 4px; }
     }
     .rec-dot { display:inline-block; width:.5em; height:.5em; border-radius:50%;
       background:#fff; margin-right:.5em; vertical-align:middle; }
