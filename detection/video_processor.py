@@ -53,7 +53,7 @@ def run_processing(file_id, input_path, output_path, mode="full_tracking",
                 bp = event.get("ball_path") or []
                 shot_id = db.add_shot(sid, event["result"], t=round(idx / fps, 2), zone=zone,
                                       x=(bp[-1][0] if bp else None), y=(bp[-1][1] if bp else None),
-                                      form=form, arc=event.get("arc"))
+                                      form=form, arc=event.get("arc"), miss=event.get("miss"))
                 rimg = event.get("release_img")
                 if rimg is not None and shot_id:
                     fn = "%d.jpg" % shot_id

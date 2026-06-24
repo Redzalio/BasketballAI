@@ -2,12 +2,14 @@
 from collections import defaultdict
 
 try:
-    from . import db, consistency, arc, fatigue
+    from . import db, consistency, arc, fatigue, miss_diagnosis, personal_best_form
 except ImportError:
     import db
     import consistency
     import arc
     import fatigue
+    import miss_diagnosis
+    import personal_best_form
 
 
 def _streaks(shots):
@@ -82,7 +84,10 @@ def session_insights(session_obj):
     return {"form_summary": fs, "zones": zones, "streaks": _streaks(shots), "tips": tips,
             "consistency": consistency.session_consistency(shots),
             "arc": arc.arc_consistency(shots),
-            "fatigue": fatigue.fatigue_analysis(shots)}
+            "fatigue": fatigue.fatigue_analysis(shots),
+            "miss": {"breakdown": miss_diagnosis.miss_breakdown(shots),
+                     "cause": miss_diagnosis.miss_cause(shots)},
+            "personal_best": personal_best_form.analyze(shots, db.all_shots())}
 
 
 def overview_insights(sessions):
@@ -140,4 +145,7 @@ def overview_insights(sessions):
             "consistency_trend": con_trend,
             "consistency_score": (latest_con or {}).get("consistency_score", 0),
             "focus": (latest_con or {}).get("focus"),
-            "arc": arc.arc_consistency(shots)}
+            "arc": arc.arc_consistency(shots),
+            "miss": {"breakdown": miss_diagnosis.miss_breakdown(shots),
+                     "cause": miss_diagnosis.miss_cause(shots)},
+            "personal_best": personal_best_form.analyze(shots, shots)}

@@ -713,6 +713,247 @@
   }
 
   /* ============================================================
+     METRIC LABELS (shared)
+     Display names + units for the raw form-dict keys. Used by the
+     personal-best delta list and the side-by-side shot compare.
+     Keep in sync with the server's metric labels.
+     ============================================================ */
+  const METRIC_LABELS = {
+    elbow_angle:          { label: "Elbow extension",   unit: "°" },
+    release_angle:        { label: "Release angle",     unit: "°" },
+    knee_bend:            { label: "Knee bend (dip)",   unit: "°" },
+    lean_deg:             { label: "Balance (lean)",    unit: "°" },
+    symmetry_deg:         { label: "Shoulder symmetry", unit: "°" },
+    release_height_ratio: { label: "Release height",    unit: "" },
+    follow_through_deg:   { label: "Follow-through",    unit: "°" }
+  };
+  /* Ordered keys so the compare table + PB list read consistently. */
+  const METRIC_ORDER = ["elbow_angle", "release_angle", "knee_bend", "lean_deg",
+    "symmetry_deg", "release_height_ratio", "follow_through_deg"];
+  function metricMeta(key) {
+    return METRIC_LABELS[key] || { label: cap(String(key || "")), unit: "" };
+  }
+
+  /* ============================================================
+     MISS DIAGNOSIS (shared)
+     Renders insights.miss (session) or overview.miss (lifetime).
+     A small horizontal distribution of where misses go + the
+     dominant bias + the cause headline and top fix. Left/right is
+     the trustworthy axis; short/long depth is shown muted with a
+     caveat. Returns "" when there's nothing worth showing so the
+     caller can decide whether to render the section header.
+     ============================================================ */
+  /* The five miss directions, with display labels + which are the
+     "soft" depth reads (short/long) we de-emphasise. */
+  var MISS_DIRS = [
+    { key: "left",   label: "Left",        soft: false },
+    { key: "right",  label: "Right",       soft: false },
+    { key: "short",  label: "Short",       soft: true  },
+    { key: "long",   label: "Long",        soft: true  },
+    { key: "in_out", label: "In &amp; out", soft: false }
+  ];
+  function missDirLabel(dir) {
+    for (var i = 0; i < MISS_DIRS.length; i++) if (MISS_DIRS[i].key === dir) return MISS_DIRS[i].label;
+    return cap(String(dir || "").replace(/_/g, " "));
+  }
+  /* True when a miss block has enough data to render anything. */
+  function missHasData(miss) {
+    return !!(miss && miss.breakdown && miss.breakdown.enough);
+  }
+  /* Build the miss-diagnosis body (no card / section wrapper). */
+  function missDiagnosisBlock(miss) {
+    if (!missHasData(miss)) return "";
+    var bd = miss.breakdown || {};
+    var dist = bd.dist || {};
+    var pct = bd.pct || {};
+    var nMiss = num(bd.n_misses);
+
+    var out = '<div class="miss-diag">';
+
+    // distribution bars
+    out += '<div class="miss-dist">';
+    MISS_DIRS.forEach(function (d) {
+      var c = num(dist[d.key]);
+      var p = Math.max(0, Math.min(100, num(pct[d.key])));
+      var isDom = bd.dominant === d.key;
+      out += '<div class="miss-row' + (d.soft ? " soft" : "") + (isDom ? " dom" : "") + '">' +
+        '<span class="miss-name">' + d.label + (d.soft ? '<span class="soft-tag" title="Depth is a softer read than left/right">depth</span>' : '') + '</span>' +
+        '<div class="miss-track"><div class="miss-fill' + (d.soft ? " soft" : "") + (isDom ? " dom" : "") +
+          '" style="width:' + p + '%"></div></div>' +
+        '<span class="miss-val">' + c + ' · ' + Math.round(p) + '%</span>' +
+      '</div>';
+    });
+    out += '</div>';
+
+    // dominant-bias callout + the cause headline + top fix
+    var cause = miss.cause || {};
+    var findings = (cause && cause.findings) || [];
+    var top = findings.length ? findings[0] : null;
+    if (bd.dominant) {
+      out += '<div class="miss-bias"><span class="miss-bias-eyebrow">Dominant miss</span>' +
+        '<span class="miss-bias-dir">' + missDirLabel(bd.dominant) + '</span>' +
+        '<span class="miss-bias-sub">' + nMiss + ' miss' + (nMiss === 1 ? "" : "es") + ' analysed</span></div>';
+    }
+    if (cause.enough && cause.headline) {
+      out += '<div class="miss-cause"><div class="miss-cause-head">' + esc(cause.headline) + '</div>';
+      if (top && top.fix) {
+        out += '<div class="miss-fix"><span class="badge">Fix</span>' +
+          '<span class="miss-fix-text">' + esc(top.fix) + '</span></div>';
+        // the underlying make-vs-miss read for the top finding (subtle)
+        if (top.label && (top.mean_make != null || top.mean_miss != null)) {
+          out += '<div class="miss-fix-meta">Your <strong>' + esc(String(top.label).toLowerCase()) +
+            '</strong> shifts from ' + fmtMetric(num(top.mean_make)) + ' on makes to ' +
+            fmtMetric(num(top.mean_miss)) + ' on misses.</div>';
+        }
+      }
+      out += '</div>';
+    } else if (cause && cause.note) {
+      out += '<div class="miss-cause-note muted">' + esc(cause.note) + '</div>';
+    }
+
+    // depth caveat (only when a depth direction is actually present)
+    var hasDepth = num(dist.short) > 0 || num(dist.long) > 0;
+    if (hasDepth) {
+      out += '<div class="miss-caveat">Left/right is the trustworthy axis from any angle — short/long depth is a softer read' +
+        (bd.note ? ' (' + esc(bd.note) + ')' : '') + '.</div>';
+    } else if (bd.note) {
+      out += '<div class="miss-caveat">' + esc(bd.note) + '</div>';
+    }
+
+    out += '</div>';
+    return out;
+  }
+
+  /* ============================================================
+     PERSONAL-BEST FORM (shared)
+     Renders insights.personal_best (session) or overview.personal_best
+     (lifetime). A 0..100 match score (ring), the biggest-gap headline
+     + fix, the per-metric template (your best-form targets), and the
+     spread. Defensive: hides when !enough. mode controls emphasis:
+       "session" -> "vs your best form" (match score is the hero)
+       "lifetime" -> "your best-form template" (targets are the hero)
+     ============================================================ */
+  function pbHasData(pb) { return !!(pb && pb.enough); }
+
+  /* The per-metric target list from a PB block's template (+ optional spread). */
+  function pbTemplateList(pb) {
+    var tmpl = (pb && pb.template) || {};
+    var spread = (pb && pb.spread) || {};
+    var keys = METRIC_ORDER.filter(function (k) { return tmpl[k] != null; });
+    // include any server keys not in our known order, appended
+    Object.keys(tmpl).forEach(function (k) { if (keys.indexOf(k) === -1) keys.push(k); });
+    if (!keys.length) return "";
+    var biggestKey = pb && pb.biggest_gap && pb.biggest_gap.metric;
+    return '<div class="pb-metrics">' + keys.map(function (k) {
+      var meta = metricMeta(k);
+      var v = num(tmpl[k], null);
+      if (v == null) return "";
+      var sp = num(spread[k], null);
+      var isBig = k === biggestKey;
+      return '<div class="pb-metric' + (isBig ? " big" : "") + '">' +
+        '<span class="pb-m-label">' + esc(meta.label) + (isBig ? '<span class="pb-m-flag">biggest gap</span>' : '') + '</span>' +
+        '<span class="pb-m-val">' + fmtMetric(v) + esc(meta.unit) +
+          (sp != null ? ' <span class="pb-m-spread">±' + fmtMetric(sp) + esc(meta.unit) + '</span>' : '') +
+        '</span>' +
+      '</div>';
+    }).join("") + '</div>';
+  }
+
+  /* biggest_gap -> a "close this first" callout. */
+  function pbGapCallout(pb) {
+    var gap = pb && pb.biggest_gap;
+    if (!gap || !gap.label) return "";
+    var meta = metricMeta(gap.metric);
+    var dir = gap.direction || "on target";
+    var delta = num(gap.mean_delta, null);
+    var arrow = dir === "higher" ? "&#9650;" : dir === "lower" ? "&#9660;" : "&#8226;";
+    var dirCls = dir === "on target" ? "on" : "off";
+    var deltaTxt = (delta != null && dir !== "on target")
+      ? Math.abs(delta).toFixed(Math.abs(delta) < 10 ? 1 : 0).replace(/\.0$/, "") + esc(meta.unit) + " " + esc(dir)
+      : "on target";
+    var out = '<div class="pb-gap ' + dirCls + '">' +
+      '<div class="pb-gap-head"><span class="pb-gap-arrow" aria-hidden="true">' + arrow + '</span>' +
+        '<span class="pb-gap-label">' + esc(gap.label) + '</span>' +
+        '<span class="pb-gap-delta">' + deltaTxt + '</span></div>';
+    if (gap.fix) out += '<div class="pb-gap-fix">' + esc(gap.fix) + '</div>';
+    out += '</div>';
+    return out;
+  }
+
+  /* Full personal-best body (no card / section wrapper). */
+  function personalBestBlock(pb, mode) {
+    if (!pbHasData(pb)) return "";
+    var lifetime = mode === "lifetime";
+    var out = '<div class="pb-block">';
+
+    if (lifetime) {
+      // lifetime: targets are the hero; a small "from N makes" note
+      var nMk = num(pb.n_makes);
+      out += '<div class="pb-lead muted">Your best-form template — the average of your cleanest makes' +
+        (nMk ? ' (' + nMk + ' make' + (nMk === 1 ? "" : "s") + ')' : '') + '. Aim here.</div>';
+      out += pbGapCallout(pb);
+      var tmplL = pbTemplateList(pb);
+      if (tmplL) out += '<div class="pb-tmpl-wrap"><div class="pb-sub-head">Target form</div>' + tmplL + '</div>';
+    } else {
+      // session: match score ring is the hero
+      var match = num(pb.session_match, null);
+      out += '<div class="pb-top">';
+      if (match != null) {
+        out += '<div class="pb-ring">' + pbMatchRing(match) + '</div>';
+      }
+      out += '<div class="pb-top-meta"><div class="pb-top-head">How close this session matched your best form</div>';
+      if (match != null) {
+        out += '<div class="pb-match-band ' + conBand(match) + '">' + pbMatchLabel(match) + '</div>';
+      }
+      var nMk2 = num(pb.n_makes);
+      if (nMk2) out += '<div class="pb-top-sub muted">Template built from your ' + nMk2 + ' cleanest make' + (nMk2 === 1 ? "" : "s") + '.</div>';
+      out += '</div></div>';
+      out += pbGapCallout(pb);
+      var tmplS = pbTemplateList(pb);
+      if (tmplS) out += '<div class="pb-tmpl-wrap"><div class="pb-sub-head">Your best-form targets</div>' + tmplS + '</div>';
+    }
+
+    out += '</div>';
+    return out;
+  }
+
+  /* 0..100 match score -> small ring (reuses the consistency band colors). */
+  function pbMatchRing(score) {
+    score = Math.max(0, Math.min(100, num(score)));
+    var band = conBand(score);
+    var R = 46, C = 58, sw = 11;              // viewBox 116x116
+    var circ = 2 * Math.PI * R;
+    var offset = circ - (score / 100) * circ;
+    return '<div class="pb-gauge">' +
+      '<svg viewBox="0 0 116 116" role="img" aria-label="Best-form match ' + Math.round(score) + ' out of 100">' +
+        '<circle class="track" cx="' + C + '" cy="' + C + '" r="' + R + '" stroke-width="' + sw + '"/>' +
+        '<circle class="arc ' + band + '" cx="' + C + '" cy="' + C + '" r="' + R + '" stroke-width="' + sw + '" ' +
+          'stroke-dasharray="' + circ.toFixed(1) + '" stroke-dashoffset="' + offset.toFixed(1) + '"/>' +
+      '</svg>' +
+      '<div class="center"><div class="big ' + band + '">' + Math.round(score) + '</div>' +
+      '<div class="out-of">match</div></div></div>';
+  }
+  function pbMatchLabel(score) {
+    score = num(score);
+    if (score >= 80) return "Dialed in";
+    if (score >= 55) return "Close";
+    return "Off your best";
+  }
+
+  /* Tiny per-shot miss tag for the shot list, e.g. "&#8601; left".
+     shot.miss = {ok,dir,confidence,note}. Returns "" when absent. */
+  function missShotTag(shot) {
+    var m = shot && shot.miss;
+    if (!m || !m.ok || !m.dir) return "";
+    var arrows = { left: "↙", right: "↘", short: "↓", long: "↑", in_out: "↺" };
+    var ar = arrows[m.dir] || "";
+    var low = num(m.confidence) > 0 && num(m.confidence) < 0.5;
+    return '<span class="miss-tag' + (low ? " faint" : "") + '" title="' +
+      esc(m.note || ("Missed " + missDirLabel(m.dir).replace(/&amp;/g, "&"))) + '">' +
+      (ar ? ar + " " : "") + esc(String(m.dir).replace(/_/g, "/")) + '</span>';
+  }
+
+  /* ============================================================
      VIEW ROUTER  (handles teardown so polling loops stop)
      ============================================================ */
   const Views = {};
@@ -1059,6 +1300,12 @@
               (grade ? '<div class="delta">' + grade.score + ' / 100</div>' : '') + '</div>') +
       '</div>';
 
+      // progress / weekly digest (loaded async after paint — its own endpoint)
+      html += '<div class="card pad" id="progressCard" style="margin-bottom:16px">' +
+        '<div class="card-title">Last 7 days <span class="sub">this week vs the week before</span></div>' +
+        '<div id="progressBody"><div class="empty-state" style="padding:24px"><div class="spinner"></div></div></div>' +
+      '</div>';
+
       // goals (loaded async after the dashboard paints — keeps overview fast)
       html += '<div class="card pad" id="goalsCard" style="margin-bottom:16px">' +
         '<div class="card-title">Goals <span class="sub">track progress toward a target</span></div>' +
@@ -1087,8 +1334,120 @@
 
       root.innerHTML = html;
 
-      // goals come from their own endpoint; load after the main paint
+      // these come from their own endpoints; load after the main paint
+      loadProgress();
       loadGoals();
+    }
+
+    /* ---- Progress / weekly digest ---- */
+    async function loadProgress() {
+      const body = $("#progressBody");
+      if (!body) return;
+      let p;
+      try { p = await api("/api/progress"); }
+      catch (e) {
+        // soft-fail: drop the whole card rather than show an error block
+        const card = $("#progressCard");
+        if (card) card.style.display = "none";
+        return;
+      }
+      const markup = progressMarkup(p);
+      if (!markup) {
+        const card = $("#progressCard");
+        if (card) card.style.display = "none";
+        return;
+      }
+      body.innerHTML = markup;
+    }
+
+    /* Up/down delta indicator. positiveGood flips color sense for metrics
+       where "down" is fine (we only use positiveGood=true here). */
+    function deltaPill(delta, opts) {
+      opts = opts || {};
+      const d = num(delta);
+      const suffix = opts.suffix || "";
+      const eps = opts.eps != null ? opts.eps : 0.05;
+      let cls, arrow, txt;
+      if (d > eps) { cls = "up"; arrow = "&#9650;"; }
+      else if (d < -eps) { cls = "down"; arrow = "&#9660;"; }
+      else { cls = "flat"; arrow = "&#8226;"; }
+      const mag = Math.abs(d);
+      txt = (cls === "flat") ? "even" : fmtGoalNum(mag) + suffix;
+      return '<span class="wk-delta ' + cls + '">' + arrow + ' ' + txt + '</span>';
+    }
+
+    /* One week-over-week stat block. */
+    function weekStat(label, cur, delta, opts) {
+      opts = opts || {};
+      const valTxt = opts.pct ? pct1(cur) + '%' : num(cur);
+      return '<div class="wk-stat">' +
+        '<div class="wk-stat-label">' + esc(label) + '</div>' +
+        '<div class="wk-stat-val">' + valTxt + '</div>' +
+        deltaPill(delta, opts) +
+      '</div>';
+    }
+
+    function progressMarkup(p) {
+      if (!p) return "";
+      const wk = p.weekly || {};
+      const vol = p.volume || {};
+      const pbs = p.pbs || {};
+      let out = "";
+
+      // weekly comparison
+      if (wk.enough) {
+        const tw = wk.this_week || {};
+        const dl = wk.deltas || {};
+        out += '<div class="wk-grid">' +
+          weekStat("FG%", tw.fg_pct, dl.fg_pct, { pct: true, suffix: "%", eps: 0.05 }) +
+          weekStat("Makes", tw.makes, dl.makes, { eps: 0.5 }) +
+          weekStat("Attempts", tw.attempts, dl.attempts, { eps: 0.5 }) +
+          weekStat("Sessions", tw.sessions, dl.sessions, { eps: 0.5 }) +
+        '</div>';
+        if (wk.summary) out += '<div class="wk-summary">' + esc(wk.summary) + '</div>';
+      } else {
+        out += '<div class="muted" style="font-size:14px">Log a few more sessions to see weekly trends.</div>';
+      }
+
+      // volume + streak + lifetime
+      const life = vol.lifetime || {};
+      const streak = num(vol.current_day_streak);
+      const activeDays = num(vol.active_days);
+      const chips = [];
+      if (streak > 0) {
+        chips.push('<span class="vol-chip streak">&#128293; ' + streak + '-day streak</span>');
+      }
+      if (activeDays > 0) {
+        chips.push('<span class="vol-chip">' + activeDays + ' active day' + (activeDays === 1 ? "" : "s") + '</span>');
+      }
+      if (num(life.attempts) || num(life.sessions)) {
+        chips.push('<span class="vol-chip">' + num(life.makes) + '/' + num(life.attempts) +
+          ' makes · ' + num(life.sessions) + ' session' + (num(life.sessions) === 1 ? "" : "s") + ' all-time</span>');
+      }
+      if (chips.length) {
+        out += '<div class="vol-row">' + chips.join("") + '</div>';
+      }
+
+      // extra PBs
+      const pbItems = [];
+      if (pbs.most_makes_day && pbs.most_makes_day.date) {
+        const md = pbs.most_makes_day;
+        pbItems.push('<div class="pb-day"><span class="pb-day-ico" aria-hidden="true">&#127919;</span>' +
+          '<div><div class="pb-day-val">' + num(md.makes) + ' makes</div>' +
+          '<div class="pb-day-sub">most in a day · ' + esc(md.date) + '</div></div></div>');
+      }
+      if (pbs.biggest_session && pbs.biggest_session.id != null) {
+        const bs = pbs.biggest_session;
+        pbItems.push('<div class="pb-day clickable" data-sid="' + num(bs.id) + '" role="button" tabindex="0">' +
+          '<span class="pb-day-ico" aria-hidden="true">&#128170;</span>' +
+          '<div><div class="pb-day-val">' + num(bs.attempts) + ' attempts</div>' +
+          '<div class="pb-day-sub">biggest session · #' + num(bs.id) + '</div></div></div>');
+      }
+      if (pbItems.length) {
+        out += '<div class="pb-day-row">' + pbItems.join("") + '</div>';
+      }
+
+      return out;
     }
 
     /* ---- Goals ---- */
@@ -1226,9 +1585,12 @@
         });
         // Enter inside the goal target/label inputs submits the goal
         $("#dashContent").addEventListener("keydown", (e) => {
-          if (e.key !== "Enter") return;
+          if (e.key !== "Enter" && e.key !== " ") return;
           const inp = e.target.closest("#goalTarget, #goalLabel");
-          if (inp) { e.preventDefault(); addGoal(); }
+          if (inp) { if (e.key === "Enter") { e.preventDefault(); addGoal(); } return; }
+          // keyboard-activate a focusable PB chip (e.g. biggest-session)
+          const chip = e.target.closest(".pb-day.clickable[data-sid]");
+          if (chip) { e.preventDefault(); show("sessions"); openSession(+chip.dataset.sid); }
         });
       },
       enter() { load(); }
@@ -1328,6 +1690,20 @@
     // arc & entry angle for this session
     body += '<div class="modal-section"><h3>Arc &amp; entry angle</h3>' + arcBlock(arc) + '</div>';
 
+    // miss diagnosis — where this session's misses go + why (left/right is the
+    // trustworthy axis). Only render when the breakdown has enough misses.
+    const miss = ins.miss || null;
+    if (missHasData(miss)) {
+      body += '<div class="modal-section"><h3>Miss diagnosis</h3>' + missDiagnosisBlock(miss) + '</div>';
+    }
+
+    // vs your best form — how close this session matched the player's cleanest
+    // makes. Only when there's a personal-best template to compare against.
+    const pb = ins.personal_best || null;
+    if (pbHasData(pb)) {
+      body += '<div class="modal-section"><h3>vs your best form</h3>' + personalBestBlock(pb, "session") + '</div>';
+    }
+
     // stamina / focus (fatigue)
     body += '<div class="modal-section"><h3>Stamina / focus</h3>' + fatigueBlock(fatigue) + '</div>';
 
@@ -1376,10 +1752,12 @@
               'title="Delete this shot" aria-label="Delete this shot">&times;</button>' +
           '</span>';
         }
+        // tiny "where it went" tag for misses (when the server tagged a direction)
+        const missTag = !isMake ? missShotTag(sh) : "";
         return '<div class="log-row">' +
           '<span class="log-num">#' + num(sh.i) + '</span>' +
           '<span class="log-res ' + (isMake ? "make" : "miss") + '">' + (isMake ? "MAKE" : "MISS") + '</span>' +
-          '<span class="log-zone">' + esc(cap(sh.zone || "")) + '</span>' + t + arcTag + chip2 + editedDot + controls + '</div>';
+          '<span class="log-zone">' + esc(cap(sh.zone || "")) + '</span>' + missTag + t + arcTag + chip2 + editedDot + controls + '</div>';
       }).join("") + '</div>';
     } else {
       body += '<div class="muted" style="font-size:14px">No individual shots recorded.</div>';
@@ -1788,6 +2166,21 @@
       html += '<div class="card pad" style="margin-bottom:16px"><div class="card-title">Arc &amp; entry angle ' +
         '<span class="sub">how repeatable your arc is</span></div>' + arcBlock(d.arc) + '</div>';
 
+      // 2d) WHERE YOUR MISSES GO (lifetime, from /api/overview.miss) — a headline
+      //     coaching payoff: dominant bias + the single fix. Only when enough.
+      if (missHasData(d.miss)) {
+        html += '<div class="card pad" style="margin-bottom:16px"><div class="card-title">Where your misses go ' +
+          '<span class="sub">lifetime · left/right is the trustworthy axis</span></div>' +
+          missDiagnosisBlock(d.miss) + '</div>';
+      }
+
+      // 2e) YOUR BEST-FORM TEMPLATE (lifetime, from /api/overview.personal_best)
+      if (pbHasData(d.personal_best)) {
+        html += '<div class="card pad" style="margin-bottom:16px"><div class="card-title">Your best-form template ' +
+          '<span class="sub">the targets to shoot toward</span></div>' +
+          personalBestBlock(d.personal_best, "lifetime") + '</div>';
+      }
+
       // 2c) latest-session fatigue one-liner (only when it actually drifted)
       if (latestFatigue && latestFatigue.enough && latestFatigue.verdict === "drifts") {
         html += '<div class="hotcold cold" style="margin-bottom:16px"><span class="ico" aria-hidden="true">&#128201;</span>' +
@@ -2090,14 +2483,81 @@
     if (!$("#sessionModal").classList.contains("open")) document.body.style.overflow = "";
   }
 
+  /* Per-metric DELTA table for two shots' form dicts (compare feature).
+     Pure client-side: lays A, B and the difference side by side using the
+     shared METRIC_LABELS. Renders any metric present on EITHER shot. */
+  function compareMetricTable(a, b) {
+    const fa = (a && a.form) || {};
+    const fb = (b && b.form) || {};
+    // union of known-order keys present on either shot, then any extras
+    const keys = METRIC_ORDER.filter((k) => fa[k] != null || fb[k] != null);
+    Object.keys(fa).concat(Object.keys(fb)).forEach((k) => {
+      if (keys.indexOf(k) === -1 && (fa[k] != null || fb[k] != null)) keys.push(k);
+    });
+    if (!keys.length) {
+      return '<div class="muted" style="font-size:13px">Neither shot has comparable form metrics.</div>';
+    }
+    let out = '<table class="cmp-table"><thead><tr>' +
+      '<th>Metric</th><th class="r">A</th><th class="r">B</th><th class="r">Diff (B&minus;A)</th>' +
+      '</tr></thead><tbody>';
+    out += keys.map((k) => {
+      const meta = metricMeta(k);
+      const va = num(fa[k], null), vb = num(fb[k], null);
+      const aTxt = va != null ? fmtMetric(va) + esc(meta.unit) : '<span class="cmp-na">—</span>';
+      const bTxt = vb != null ? fmtMetric(vb) + esc(meta.unit) : '<span class="cmp-na">—</span>';
+      let diffTxt = '<span class="cmp-na">—</span>', diffCls = "";
+      if (va != null && vb != null) {
+        const d = vb - va;
+        const eps = Math.abs(va) < 5 ? 0.02 : 0.5;   // ratio metrics use a tiny epsilon
+        diffCls = d > eps ? "up" : d < -eps ? "down" : "flat";
+        const arrow = diffCls === "up" ? "&#9650;" : diffCls === "down" ? "&#9660;" : "&#8226;";
+        diffTxt = '<span class="cmp-diff ' + diffCls + '">' + arrow + ' ' +
+          (d > 0 ? "+" : "") + fmtMetric(d) + esc(meta.unit) + '</span>';
+      }
+      return '<tr><td class="metric">' + esc(meta.label) + '</td>' +
+        '<td class="r">' + aTxt + '</td>' +
+        '<td class="r">' + bTxt + '</td>' +
+        '<td class="r">' + diffTxt + '</td></tr>';
+    }).join("");
+    out += '</tbody></table>';
+    return out;
+  }
+
   Views.forms = (function () {
     let shots = [];          // cache of the last fetch
     let filter = "all";      // all | make | miss
     let loaded = false;
+    // --- compare state ---
+    let compareMode = false; // when on, clicking cards picks A/B instead of opening the lightbox
+    let selA = null;         // selected shot id (slot A) or null
+    let selB = null;         // selected shot id (slot B) or null
 
     function filtered() {
       if (filter === "all") return shots;
       return shots.filter((s) => s.result === filter);
+    }
+
+    /* Compare toolbar: toggle + selection hint + clear. Always at the top of
+       the gallery so it never depends on index.html (which we don't own). */
+    function compareToolbar() {
+      const picked = (selA != null ? 1 : 0) + (selB != null ? 1 : 0);
+      let hint;
+      if (!compareMode) {
+        hint = 'Compare two release frames side by side.';
+      } else if (picked === 0) {
+        hint = 'Pick a shot for <strong>A</strong>.';
+      } else if (picked === 1) {
+        hint = 'Now pick a shot for <strong>B</strong>.';
+      } else {
+        hint = 'Comparing A vs B below. Click a selected card to swap it out.';
+      }
+      return '<div class="cmp-bar">' +
+        '<button type="button" class="btn sm cmp-toggle' + (compareMode ? " on" : "") + '" id="cmpToggle" ' +
+          'aria-pressed="' + (compareMode ? "true" : "false") + '">' +
+          (compareMode ? '&#10005; Exit compare' : '&#8646; Compare shots') + '</button>' +
+        (compareMode ? '<span class="cmp-hint">' + hint + '</span>' : '<span class="cmp-hint muted">' + hint + '</span>') +
+        (compareMode && picked ? '<button type="button" class="btn ghost sm cmp-clear" id="cmpClear">Clear</button>' : '') +
+      '</div>';
     }
 
     function render() {
@@ -2108,13 +2568,44 @@
         return;
       }
       const list = filtered();
+      let html = compareToolbar();
+      // compare panel sits above the grid when two are picked
+      if (compareMode && selA != null && selB != null) {
+        html += comparePanel();
+      }
       if (!list.length) {
-        root.innerHTML = emptyState("&#128247;",
+        html += emptyState("&#128247;",
           filter === "make" ? "No makes captured yet" : "No misses captured yet",
           "Switch the filter, or track more shots to fill this in.");
-        return;
+      } else {
+        html += '<div class="form-grid' + (compareMode ? " compare-mode" : "") + '">' + list.map(cardHtml).join("") + '</div>';
       }
-      root.innerHTML = '<div class="form-grid">' + list.map(cardHtml).join("") + '</div>';
+      root.innerHTML = html;
+    }
+
+    /* The side-by-side compare panel for the two selected shots. */
+    function comparePanel() {
+      const a = findShot(selA), b = findShot(selB);
+      if (!a || !b) return "";
+      const fig = (sh, slot) => {
+        const isMake = sh.result === "make";
+        const meta = [];
+        if (sh.zone) meta.push(esc(cap(sh.zone)));
+        if (sh.date) meta.push(esc(sh.date));
+        if (sh.t != null) meta.push("@" + Number(sh.t).toFixed(1) + "s");
+        return '<div class="cmp-fig">' +
+          '<div class="cmp-fig-head"><span class="cmp-slot">' + slot + '</span>' +
+            '<span class="log-res ' + (isMake ? "make" : "miss") + '">' + (isMake ? "MAKE" : "MISS") + '</span>' +
+            (meta.length ? '<span class="cmp-fig-meta">' + meta.join(" &middot; ") + '</span>' : '') + '</div>' +
+          '<div class="cmp-img"><img src="' + esc(sh.image) + '" alt="Release frame for shot #' + num(sh.id) +
+            '" loading="lazy" onerror="this.classList.add(\'broken\')" /></div>' +
+        '</div>';
+      };
+      return '<div class="cmp-panel">' +
+        '<div class="cmp-figs">' + fig(a, "A") + fig(b, "B") + '</div>' +
+        '<div class="cmp-synced">Both frames are captured at release, so they\'re lined up at the same moment of the shot.</div>' +
+        '<div class="cmp-deltas">' + compareMetricTable(a, b) + '</div>' +
+      '</div>';
     }
 
     function cardHtml(s) {
@@ -2125,8 +2616,17 @@
       if (num(f.elbow_angle, null) != null) bits.push('<span class="fg-stat">Elbow ' + Math.round(num(f.elbow_angle)) + '&deg;</span>');
       if (num(f.release_angle, null) != null) bits.push('<span class="fg-stat">Release ' + Math.round(num(f.release_angle)) + '&deg;</span>');
       else if (num(f.knee_bend, null) != null) bits.push('<span class="fg-stat">Knee ' + Math.round(num(f.knee_bend)) + '&deg;</span>');
-      return '<button class="form-card" data-id="' + num(s.id) + '" aria-label="Open release frame for shot #' + num(s.id) + '">' +
-        '<div class="fc-thumb"><img src="' + esc(s.image) + '" loading="lazy" alt="Release frame, shot #' + num(s.id) +
+      const id = num(s.id);
+      // selection state (compare mode): which slot, if any
+      const slot = (id === selA) ? "A" : (id === selB) ? "B" : null;
+      const selCls = slot ? " selected sel-" + slot.toLowerCase() : "";
+      const ariaLabel = compareMode
+        ? (slot ? "Shot #" + id + ", selected as " + slot + " — click to deselect" : "Pick shot #" + id + " to compare")
+        : "Open release frame for shot #" + id;
+      return '<button class="form-card' + selCls + '" data-id="' + id + '" aria-label="' + ariaLabel + '"' +
+          (compareMode ? ' aria-pressed="' + (slot ? "true" : "false") + '"' : '') + '>' +
+        (slot ? '<span class="cmp-badge">' + slot + '</span>' : '') +
+        '<div class="fc-thumb"><img src="' + esc(s.image) + '" loading="lazy" alt="Release frame, shot #' + id +
           '" onerror="this.classList.add(\'broken\')" />' +
           '<span class="fc-chip ' + (isMake ? "make" : "miss") + '">' + (isMake ? "MAKE" : "MISS") + '</span></div>' +
         '<div class="fc-foot"><span class="fc-zone">' + esc(cap(s.zone || "—")) + '</span>' +
@@ -2143,6 +2643,9 @@
         const d = await api("/api/forms");
         shots = (d && d.shots) || [];
         loaded = true;
+        // drop any stale selections that aren't in the new set
+        if (selA != null && !findShot(selA)) selA = null;
+        if (selB != null && !findShot(selB)) selB = null;
         render();
       } catch (e) {
         root.innerHTML = emptyState("&#9888;", "Couldn't load form snapshots", e.message);
@@ -2158,6 +2661,25 @@
 
     function findShot(id) { return shots.filter((s) => num(s.id) === id)[0] || null; }
 
+    /* Toggle compare mode on/off (clears selection when turning off). */
+    function toggleCompare() {
+      compareMode = !compareMode;
+      if (!compareMode) { selA = null; selB = null; }
+      render();
+    }
+    function clearCompare() { selA = null; selB = null; render(); }
+
+    /* Pick / unpick a shot for compare. Fills A, then B; clicking an already-
+       selected card removes it; once both are full a new pick replaces B. */
+    function pickForCompare(id) {
+      if (id === selA) { selA = null; }
+      else if (id === selB) { selB = null; }
+      else if (selA == null) { selA = id; }
+      else if (selB == null) { selB = id; }
+      else { selB = id; }   // both full — replace the most recently filled slot (B)
+      render();
+    }
+
     return {
       init() {
         $("#formsFilter").addEventListener("click", (e) => {
@@ -2165,8 +2687,15 @@
           if (b) setFilter(b.dataset.filter);
         });
         $("#formsContent").addEventListener("click", (e) => {
+          // compare controls (live inside #formsContent since we don't own index.html)
+          if (e.target.closest("#cmpToggle")) { toggleCompare(); return; }
+          if (e.target.closest("#cmpClear")) { clearCompare(); return; }
           const card = e.target.closest(".form-card");
-          if (card) { const sh = findShot(+card.dataset.id); if (sh) openLightbox(sh); }
+          if (!card) return;
+          const id = +card.dataset.id;
+          if (compareMode) { pickForCompare(id); return; }
+          const sh = findShot(id);
+          if (sh) openLightbox(sh);
         });
         // lightbox: "Open session" jumps to the session modal
         $("#lightboxBody").addEventListener("click", (e) => {

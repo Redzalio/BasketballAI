@@ -57,6 +57,8 @@ def init_db():
             c.execute("ALTER TABLE shots ADD COLUMN form_image TEXT")
         if "manual" not in cols:
             c.execute("ALTER TABLE shots ADD COLUMN manual INTEGER DEFAULT 0")
+        if "miss_json" not in cols:
+            c.execute("ALTER TABLE shots ADD COLUMN miss_json TEXT")
         scols = [r[1] for r in c.execute("PRAGMA table_info(sessions)").fetchall()]
         if "video_path" not in scols:
             c.execute("ALTER TABLE sessions ADD COLUMN video_path TEXT")
@@ -91,6 +93,12 @@ def _attach_form(d):
             d["arc"] = json.loads(aj)
         except Exception:
             pass
+    mj = d.get("miss_json")
+    if mj:
+        try:
+            d["miss"] = json.loads(mj)
+        except Exception:
+            pass
     return d
 
 
@@ -104,18 +112,19 @@ def create_session(mode, source=""):
 
 
 def add_shot(session_id, result, t=None, zone=None, x=None, y=None, form=None,
-             arc=None, form_image=None):
+             arc=None, form_image=None, miss=None):
     form = form or {}
     with _conn() as c:
         cur = c.execute(
             """INSERT INTO shots(session_id,t,result,made,zone,x,y,
                                  elbow_angle,knee_angle,lean_deg,follow_through,
-                                 form_json,arc_json,form_image)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                 form_json,arc_json,form_image,miss_json)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (session_id, t, result, 1 if result == "make" else 0, zone, x, y,
              form.get("elbow_angle"), form.get("knee_angle"), form.get("lean_deg"),
              1 if form.get("follow_through") else 0, json.dumps(form),
-             json.dumps(arc) if arc else None, form_image),
+             json.dumps(arc) if arc else None, form_image,
+             json.dumps(miss) if miss else None),
         )
         return cur.lastrowid
 

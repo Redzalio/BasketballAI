@@ -32,6 +32,11 @@ try:
 except Exception:
     arc_mod = None
 
+try:
+    from stats import miss_diagnosis as miss_mod   # miss location (left/right/short/long), numpy-only
+except Exception:
+    miss_mod = None
+
 ROOT = Path(__file__).resolve().parent.parent
 FALLBACK = ROOT / "models" / "best_fallback.pt"
 DETECTOR = ROOT / "models" / "detector.pt"
@@ -100,11 +105,17 @@ class HoopEngine:
             self.last_result = event["result"]
             self.flash = 18
             self.flash_color = (0, 200, 0) if event["result"] == "make" else (0, 0, 220)
+            lo = event["frame"] - 55
+            pts = [(f, x, y) for (f, x, y) in self.arc_buf if lo <= f <= event["frame"] + 2]
             if arc_mod is not None:
-                lo = event["frame"] - 55
-                pts = [(f, x, y) for (f, x, y) in self.arc_buf if lo <= f <= event["frame"] + 2]
                 try:
                     event["arc"] = arc_mod.analyze_arc(pts, self.tracker.rim_center, frame.shape)
+                except Exception:
+                    pass
+            if miss_mod is not None:
+                try:
+                    event["miss"] = miss_mod.classify_miss(
+                        pts, self.tracker.rim_center, frame.shape, event["result"])
                 except Exception:
                     pass
             if self.pose is not None:

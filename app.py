@@ -13,6 +13,7 @@ from stats import db
 from stats.insights import session_insights, overview_insights
 from stats import goals, practice, hard_examples
 from stats import video_play
+from stats import progress
 from detection.engine import HoopEngine
 from detection.pose import PoseAnalyzer
 from detection.court import CourtMapper
@@ -192,6 +193,7 @@ def session_detail(sid):
         abort(404)
     shots = [{"i": i + 1, "id": s["id"], "result": s["result"], "zone": s["zone"], "t": s["t"],
               "manual": bool(s.get("manual")), "form": s.get("form", {}), "arc": s.get("arc"),
+              "miss": s.get("miss"),
               "image": ("/api/form_image/%d" % s["id"]) if s.get("form_image") else None}
              for i, s in enumerate(obj["shots"])]
     ann = obj["session"].get("annotated_path")
@@ -298,6 +300,11 @@ def overview():
     lifetime = {"makes": makes, "attempts": attempts, "shots": attempts, "sessions": len(sess),
                 "fg_pct": round(100 * makes / attempts, 1) if attempts else 0.0}
     return jsonify({"lifetime": lifetime, **overview_insights(sess)})
+
+
+@app.route("/api/progress")
+def progress_report():
+    return jsonify(progress.progress_report(db.list_sessions(), db.all_shots()))
 
 
 @app.route("/api/goals", methods=["GET"])
