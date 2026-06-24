@@ -232,7 +232,11 @@
 
   // ---------- recording (raw camera -> saved for desktop import) ----------
   function pickMime() {
-    for (const m of ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'])
+    // Prefer HARDWARE-encoded H.264 — phones can't HW-encode VP9, so the old vp9-first
+    // order forced slow software encoding that fought the detector for CPU (= the lag).
+    // H.264 offloads to the video chip; VP8 (lighter SW) before VP9 as last resort.
+    for (const m of ['video/mp4;codecs=h264', 'video/mp4', 'video/webm;codecs=h264',
+                     'video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm'])
       if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
     return '';
   }
@@ -254,7 +258,9 @@
 
   function startRec() {
     const mime = pickMime(); chunks = [];
-    recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const opts = mime ? { mimeType: mime } : {};
+    opts.videoBitsPerSecond = 2500000;   // ~2.5 Mbps: smaller files + lighter encode, still fine for PC analysis
+    recorder = new MediaRecorder(stream, opts);
     recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
     recorder.onstop = async () => {
       const type = chunks[0] ? chunks[0].type : 'video/webm';
